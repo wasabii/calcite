@@ -69,7 +69,7 @@ jobs:
       with:
         job-id: jdk${{ matrix.jdk }}
         remote-build-cache-proxy-enabled: false
-        arguments: --scan --no-parallel --no-daemon build javadoc
+        arguments: --no-parallel --no-daemon build javadoc
     - name: 'sqlline and sqllsh'
       shell: cmd
       run: |
@@ -99,7 +99,7 @@ jobs:
         with:
           job-id: jdk${{ matrix.jdk }}
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon build
+          arguments: --no-parallel --no-daemon build
       - name: 'sqlline and sqllsh'
         shell: cmd
         run: |
@@ -129,7 +129,7 @@ jobs:
         with:
           job-id: jdk${{ matrix.jdk }}
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon build
+          arguments: --no-parallel --no-daemon build
       - name: 'sqlline and sqllsh'
         shell: cmd
         run: |
@@ -161,7 +161,7 @@ jobs:
         with:
           job-id: jdk${{ matrix.jdk }}
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA_MIN }} build
+          arguments: --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA_MIN }} build
 
   linux-jdk8-latest-guava-tz:
     if: github.event.action != 'labeled'
@@ -183,7 +183,7 @@ jobs:
         with:
           job-id: jdk${{ matrix.jdk }}
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA_MAX }} tasks build
+          arguments: --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA_MAX }} tasks build
 
   linux-jdk11-tz:
     if: github.event.action != 'labeled'
@@ -205,7 +205,7 @@ jobs:
         with:
           job-id: jdk${{ matrix.jdk }}
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon build
+          arguments: --no-parallel --no-daemon build
 
   linux-jdk17:  # LTS JDK version, don't remove until EOL
     if: github.event.action != 'labeled'
@@ -225,7 +225,7 @@ jobs:
         with:
           job-id: jdk${{ matrix.jdk }}
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA }} build
+          arguments: --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA }} build
 
   linux-jdk121:  # LTS JDK version, don't remove until EOL
     if: github.event.action != 'labeled'
@@ -245,7 +245,7 @@ jobs:
         with:
           job-id: jdk${{ matrix.jdk }}
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA }} build
+          arguments: --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA }} build
 
   linux-jdk24: # latest JDK version supported by ForbiddenAPIs plugin, keep this updated (see https://jdk.java.net/)
     if: github.event.action != 'labeled'
@@ -265,7 +265,7 @@ jobs:
         with:
           job-id: jdk${{ matrix.jdk }}
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA }} tasks build
+          arguments: --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA }} tasks build
 
   linux-avatica:
     if: github.event.action != 'labeled'
@@ -299,7 +299,7 @@ jobs:
         job-id: jdk${{ matrix.jdk }}
         remote-build-cache-proxy-enabled: false
         execution-only-caches: true
-        arguments: --scan --no-parallel --no-daemon build javadoc
+        arguments: --no-parallel --no-daemon build javadoc
         properties: |
           calcite.avatica.version=1.0.0-dev-main-SNAPSHOT
           enableMavenLocal=
@@ -322,7 +322,7 @@ jobs:
         with:
           job-id: jdk21
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon build javadoc
+          arguments: --no-parallel --no-daemon build javadoc
       - name: 'sqlline and sqllsh'
         run: |
           ./sqlline -e '!quit'
@@ -352,7 +352,7 @@ jobs:
           job-id: errprone
           remote-build-cache-proxy-enabled: false
           # ErrorProne checks for Beta APIs, so use the latest supported Guava version
-          arguments: --scan --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA_MAX }} -PenableErrorprone classes
+          arguments: --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA_MAX }} -PenableErrorprone classes
 
   linux-checkerframework:
     name: 'CheckerFramework (JDK 11)'
@@ -371,7 +371,7 @@ jobs:
         with:
           job-id: checkerframework-jdk11
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon -PenableCheckerframework :linq4j:classes :core:classes :server:classes
+          arguments: --no-parallel --no-daemon -PenableCheckerframework :linq4j:classes :core:classes :server:classes
 
   linux-checkerframework-oldest-guava:
     name: 'CheckerFramework (JDK 11, oldest Guava)'
@@ -390,7 +390,7 @@ jobs:
         with:
           job-id: checkerframework-jdk11
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA_MIN }} -PenableCheckerframework :linq4j:classes :core:classes :server:classes
+          arguments: --no-parallel --no-daemon -Pguava.version=${{ env.GUAVA_MIN }} -PenableCheckerframework :linq4j:classes :core:classes :server:classes
 
   linux-slow:
     # Run slow tests when the commit is on main or it is requested explicitly by adding an
@@ -412,7 +412,7 @@ jobs:
         with:
           job-id: jdk8
           remote-build-cache-proxy-enabled: false
-          arguments: --scan --no-parallel --no-daemon testSlow
+          arguments: --no-parallel --no-daemon testSlow
 
   linux-druid:
     if: github.event.action != 'labeled'
@@ -456,4 +456,4 @@ jobs:
         build-root-directory: ./calcite
         job-id: Druid8
         remote-build-cache-proxy-enabled: false
-        arguments: --scan --no-parallel --no-daemon :druid:test -Dcalcite.test.druid=true
+        arguments: --no-parallel --no-daemon :druid:test -Dcalcite.test.druid=true
