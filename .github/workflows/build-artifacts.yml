@@ -1,0 +1,95 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Builds the project and publishes the resulting JAR files as a GitHub
+# Actions workflow artifact, so they can be downloaded from the run page
+# (or via `gh run download` / the REST API) without needing a Maven /
+# package registry. Tests are skipped to keep this workflow fast; the
+# main CI workflow is responsible for verifying correctness.
+
+name: Build artifacts
+
+on:
+  push:
+    paths-ignore:
+      - 'site/**'
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      jdk:
+        description: 'JDK major version to build with'
+        required: false
+        default: '17'
+
+concurrency:
+  group: build-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  _JAVA_OPTIONS: '-XX:GCTimeLimit=90 -XX:GCHeapFreeLimit=35'
+
+jobs:
+  build:
+    name: 'Build JARs (JDK ${{ github.event.inputs.jdk || ''17'' }})'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 50
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ github.event.inputs.jdk || '17' }}
+          distribution: 'zulu'
+
+      - name: Build (assemble, no tests)
+        uses: burrunan/gradle-cache-action@v1
+        with:
+          job-id: build-artifacts-jdk${{ github.event.inputs.jdk || '17' }}
+          remote-build-cache-proxy-enabled: false
+          arguments: --no-parallel --no-daemon assemble -x test
+
+      - name: Stage JAR files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          # Collect every jar produced by any subproject under build/libs.
+          # Skip the buildSrc jars as they're internal build infrastructure.
+          find . -type f -name '*.jar' \
+            -path '*/build/libs/*' \
+            ! -path './buildSrc/*' \
+            -print0 | while IFS= read -r -d '' jar; do
+              # Subproject name is the directory two levels above build/libs.
+              subproject="$(basename "$(dirname "$(dirname "$(dirname "$jar")")")")"
+              dest="staging/${subproject}"
+              mkdir -p "$dest"
+              cp -v "$jar" "$dest/"
+            done
+          echo
+          echo "Staged artifacts:"
+          find staging -type f -name '*.jar' | sort
+
+      - name: Upload JAR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: calcite-jars-${{ github.sha }}
+          path: staging/**/*.jar
+          if-no-files-found: error
+          retention-days: 30
+

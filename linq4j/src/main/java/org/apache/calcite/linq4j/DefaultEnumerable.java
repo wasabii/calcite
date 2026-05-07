@@ -381,9 +381,9 @@ public abstract class DefaultEnumerable<T> implements OrderedEnumerable<T> {
       List<T> sink,
       Function1<T, TKey> sinkKeySelector,
       Function1<T, TKey> sourceKeySelector,
-      Function1<T, T> sourceTransform) {
+      Function1<T, T> transform) {
     return EnumerableDefaults.update(getThis(), sink, sinkKeySelector,
-        sourceKeySelector, sourceTransform);
+        sourceKeySelector, transform);
   }
 
   @Override public <TInner, TKey, TResult> Enumerable<TResult> hashJoin(

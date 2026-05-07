@@ -562,7 +562,7 @@ public interface ExtendedEnumerable<TSource> {
    * @param sink              List to be updated in place
    * @param sinkKeySelector   Function that extracts a key from a sink row
    * @param sourceKeySelector Function that extracts a key from a source row
-   * @param sourceTransform   Function that produces the replacement row from a
+   * @param transform         Function that produces the replacement row from a
    *                          source row
    * @param <TKey>            Key type
    * @return Number of rows replaced
@@ -571,7 +571,7 @@ public interface ExtendedEnumerable<TSource> {
       List<TSource> sink,
       Function1<TSource, TKey> sinkKeySelector,
       Function1<TSource, TKey> sourceKeySelector,
-      Function1<TSource, TSource> sourceTransform);
+      Function1<TSource, TSource> transform);
 
   /**
    * Correlates the elements of two sequences based on
