@@ -17,6 +17,8 @@
 package org.apache.calcite.adapter.enumerable;
 
 import org.apache.calcite.adapter.java.JavaTypeFactory;
+import org.apache.calcite.linq4j.Enumerable;
+import org.apache.calcite.linq4j.Enumerator;
 import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
@@ -28,6 +30,7 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.prepare.Prepare;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableModify;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.schema.ModifiableTable;
 import org.apache.calcite.util.BuiltInMethod;
@@ -37,8 +40,12 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.ListIterator;
+import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
@@ -100,6 +107,54 @@ public class EnumerableTableModify extends TableModify
                 expression,
                 BuiltInMethod.MODIFIABLE_TABLE_GET_MODIFIABLE_COLLECTION
                     .method)));
+    final PhysType physType =
+        PhysTypeImpl.of(
+            implementor.getTypeFactory(),
+            getRowType(),
+            pref == Prefer.ARRAY
+                ? JavaRowFormat.ARRAY : JavaRowFormat.SCALAR);
+
+    if (getOperation() == Operation.UPDATE) {
+      // For UPDATE, the child produces rows with tableFieldCount + M fields:
+      // [originalField_0, ..., originalField_N-1, newValue_0, ..., newValue_M-1]
+      // where M = updateColumnList.size().
+      final List<String> updateCols = requireNonNull(getUpdateColumnList());
+      final List<RelDataTypeField> tableFields = table.getRowType().getFieldList();
+      final int tableFieldCount = tableFields.size();
+      final int[] updateColumnIndices = new int[updateCols.size()];
+      for (int i = 0; i < updateCols.size(); i++) {
+        final String colName = updateCols.get(i);
+        int found = -1;
+        for (int j = 0; j < tableFields.size(); j++) {
+          if (tableFields.get(j).getName().equals(colName)) {
+            found = j;
+            break;
+          }
+        }
+        if (found < 0) {
+          throw new AssertionError("column '" + colName + "' not found in table");
+        }
+        updateColumnIndices[i] = found;
+      }
+      final Expression updateCountExp =
+          builder.append(
+              "updateCount",
+              Expressions.call(
+                  EnumerableTableModify.class,
+                  "update",
+                  childExp,
+                  collectionParameter,
+                  Expressions.constant(tableFieldCount),
+                  Expressions.constant(updateColumnIndices)));
+      builder.add(
+          Expressions.return_(
+              null,
+              Expressions.call(
+                  BuiltInMethod.SINGLETON_ENUMERABLE.method,
+                  Expressions.convert_(updateCountExp, long.class))));
+      return implementor.result(physType, builder.toBlock());
+    }
+
     final Expression countParameter =
         builder.append(
             "count",
@@ -110,7 +165,7 @@ public class EnumerableTableModify extends TableModify
       final JavaTypeFactory typeFactory =
           (JavaTypeFactory) getCluster().getTypeFactory();
       final JavaRowFormat format = EnumerableTableScan.deduceFormat(table);
-      PhysType physType =
+      PhysType tablePhysType =
           PhysTypeImpl.of(typeFactory, table.getRowType(), format);
       List<Expression> expressionList = new ArrayList<>();
       final PhysType childPhysType = result.physType;
@@ -120,7 +175,7 @@ public class EnumerableTableModify extends TableModify
           childPhysType.getRowType().getFieldCount();
       for (int i = 0; i < fieldCount; i++) {
         expressionList.add(
-            childPhysType.fieldReference(o_, i, physType.getJavaFieldType(i)));
+            childPhysType.fieldReference(o_, i, tablePhysType.getJavaFieldType(i)));
       }
       convertedChildExp =
           builder.append(
@@ -129,7 +184,7 @@ public class EnumerableTableModify extends TableModify
                   childExp,
                   BuiltInMethod.SELECT.method,
                   Expressions.lambda(
-                      physType.record(expressionList), o_)));
+                      tablePhysType.record(expressionList), o_)));
     } else {
       convertedChildExp = childExp;
     }
@@ -167,13 +222,64 @@ public class EnumerableTableModify extends TableModify
                         Expressions.subtract(
                             countParameter, updatedCountParameter)),
                     long.class))));
-    final PhysType physType =
-        PhysTypeImpl.of(
-            implementor.getTypeFactory(),
-            getRowType(),
-            pref == Prefer.ARRAY
-                ? JavaRowFormat.ARRAY : JavaRowFormat.SCALAR);
     return implementor.result(physType, builder.toBlock());
+  }
+
+  /**
+   * Updates rows in a collection based on the source enumerable.
+   *
+   * <p>Each row in {@code source} has the structure:
+   * {@code [originalField_0, ..., originalField_N-1, newValue_0, ..., newValue_M-1]}
+   * where {@code N = tableFieldCount} and {@code M = updateColumnIndices.length}.
+   * The original row (first N fields) is located in the collection by value
+   * equality and replaced with the updated row.
+   *
+   * @param source            Source enumerable with original + new values
+   * @param collection        Collection to update (must be a {@link List} for
+   *                          in-place modification)
+   * @param tableFieldCount   Number of fields in the original table row
+   * @param updateColumnIndices 0-based indices of the columns being updated
+   * @return Count of updated rows
+   */
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  public static long update(
+      Enumerable<Object[]> source,
+      Collection collection,
+      int tableFieldCount,
+      int[] updateColumnIndices) {
+    if (!(collection instanceof List)) {
+      throw new IllegalArgumentException(
+          "UPDATE requires the modifiable collection to be a List; got "
+              + collection.getClass().getName());
+    }
+    // Build a map from original row content (using List for content-equality) to
+    // the corresponding new row. This allows a single O(n) pass over the
+    // collection rather than an O(n*m) nested scan.
+    final Map<List<Object>, Object[]> updateMap = new HashMap<>();
+    try (Enumerator<Object[]> e = source.enumerator()) {
+      while (e.moveNext()) {
+        final Object[] row = e.current();
+        final Object[] oldRow = Arrays.copyOf(row, tableFieldCount);
+        final Object[] newRow = Arrays.copyOf(row, tableFieldCount);
+        for (int i = 0; i < updateColumnIndices.length; i++) {
+          newRow[updateColumnIndices[i]] = row[tableFieldCount + i];
+        }
+        // Arrays.asList provides content-based equals/hashCode for use as a map key.
+        updateMap.put(Arrays.asList(oldRow), newRow);
+      }
+    }
+    final List<Object[]> list = (List<Object[]>) collection;
+    int updateCount = 0;
+    final ListIterator<Object[]> it = list.listIterator();
+    while (it.hasNext()) {
+      final Object[] current = it.next();
+      final Object[] newRow = updateMap.get(Arrays.asList(current));
+      if (newRow != null) {
+        it.set(newRow);
+        updateCount++;
+      }
+    }
+    return updateCount;
   }
 
 }
