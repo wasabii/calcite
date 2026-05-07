@@ -17,6 +17,7 @@
 package org.apache.calcite.adapter.enumerable;
 
 import org.apache.calcite.adapter.java.JavaTypeFactory;
+import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
@@ -28,6 +29,7 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.prepare.Prepare;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableModify;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.schema.ModifiableTable;
 import org.apache.calcite.util.BuiltInMethod;
@@ -37,6 +39,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
@@ -100,6 +103,92 @@ public class EnumerableTableModify extends TableModify
                 expression,
                 BuiltInMethod.MODIFIABLE_TABLE_GET_MODIFIABLE_COLLECTION
                     .method)));
+
+    final PhysType physType =
+        PhysTypeImpl.of(
+            implementor.getTypeFactory(),
+            getRowType(),
+            pref == Prefer.ARRAY
+                ? JavaRowFormat.ARRAY : JavaRowFormat.SCALAR);
+
+    if (getOperation() == Operation.UPDATE) {
+      // For UPDATE, the child produces, for each row matched by the WHERE
+      // clause, a row of tableFieldCount + M fields:
+      //   [originalField_0, ..., originalField_N-1, newValue_0, ..., newValue_M-1]
+      // The first N fields are the *entire* original table row (all columns,
+      // not just those being updated); the trailing M = updateColumnList.size()
+      // fields are the new values, one per column named in the SET clause.
+      // Filtering by WHERE has already been applied upstream, so every source
+      // row corresponds to an existing row in the modifiable collection and
+      // can be located by full-row content equality.
+      final List<String> updateCols = requireNonNull(getUpdateColumnList());
+      final List<RelDataTypeField> tableFields = table.getRowType().getFieldList();
+      final int tableFieldCount = tableFields.size();
+      final int[] updateColumnIndices = new int[updateCols.size()];
+      for (int i = 0; i < updateCols.size(); i++) {
+        final String colName = updateCols.get(i);
+        int found = -1;
+        for (int j = 0; j < tableFields.size(); j++) {
+          if (tableFields.get(j).getName().equals(colName)) {
+            found = j;
+            break;
+          }
+        }
+        if (found < 0) {
+          throw new AssertionError("column '" + colName + "' not found in table");
+        }
+        updateColumnIndices[i] = found;
+      }
+
+      // Build the three lambdas required by ExtendedEnumerable.update:
+      //   sinkKeySelector:   row -> Arrays.asList(row)
+      //   sourceKeySelector: row -> Arrays.asList(Arrays.copyOf(row, N))
+      //   sourceTransform:   row -> applyUpdate(row, N, updateColumnIndices)
+      final ParameterExpression sinkRow =
+          Expressions.parameter(Object[].class, "sinkRow");
+      final Expression sinkKeySelector =
+          Expressions.lambda(Function1.class,
+              Expressions.call(Arrays.class, "asList", sinkRow),
+              sinkRow);
+
+      final ParameterExpression srcKeyRow =
+          Expressions.parameter(Object[].class, "row");
+      final Expression sourceKeySelector =
+          Expressions.lambda(Function1.class,
+              Expressions.call(Arrays.class, "asList",
+                  Expressions.call(Arrays.class, "copyOf",
+                      srcKeyRow, Expressions.constant(tableFieldCount))),
+              srcKeyRow);
+
+      final ParameterExpression srcXformRow =
+          Expressions.parameter(Object[].class, "row");
+      final Expression sourceTransform =
+          Expressions.lambda(Function1.class,
+              Expressions.call(EnumerableTableModify.class, "applyUpdate",
+                  srcXformRow,
+                  Expressions.constant(tableFieldCount),
+                  Expressions.constant(updateColumnIndices)),
+              srcXformRow);
+
+      final Expression updateCountExp =
+          builder.append(
+              "updateCount",
+              Expressions.call(
+                  childExp,
+                  BuiltInMethod.UPDATE.method,
+                  Expressions.convert_(collectionParameter, List.class),
+                  sinkKeySelector,
+                  sourceKeySelector,
+                  sourceTransform));
+      builder.add(
+          Expressions.return_(
+              null,
+              Expressions.call(
+                  BuiltInMethod.SINGLETON_ENUMERABLE.method,
+                  Expressions.convert_(updateCountExp, long.class))));
+      return implementor.result(physType, builder.toBlock());
+    }
+
     final Expression countParameter =
         builder.append(
             "count",
@@ -110,7 +199,7 @@ public class EnumerableTableModify extends TableModify
       final JavaTypeFactory typeFactory =
           (JavaTypeFactory) getCluster().getTypeFactory();
       final JavaRowFormat format = EnumerableTableScan.deduceFormat(table);
-      PhysType physType =
+      PhysType tablePhysType =
           PhysTypeImpl.of(typeFactory, table.getRowType(), format);
       List<Expression> expressionList = new ArrayList<>();
       final PhysType childPhysType = result.physType;
@@ -120,7 +209,7 @@ public class EnumerableTableModify extends TableModify
           childPhysType.getRowType().getFieldCount();
       for (int i = 0; i < fieldCount; i++) {
         expressionList.add(
-            childPhysType.fieldReference(o_, i, physType.getJavaFieldType(i)));
+            childPhysType.fieldReference(o_, i, tablePhysType.getJavaFieldType(i)));
       }
       convertedChildExp =
           builder.append(
@@ -129,7 +218,7 @@ public class EnumerableTableModify extends TableModify
                   childExp,
                   BuiltInMethod.SELECT.method,
                   Expressions.lambda(
-                      physType.record(expressionList), o_)));
+                      tablePhysType.record(expressionList), o_)));
     } else {
       convertedChildExp = childExp;
     }
@@ -167,13 +256,36 @@ public class EnumerableTableModify extends TableModify
                         Expressions.subtract(
                             countParameter, updatedCountParameter)),
                     long.class))));
-    final PhysType physType =
-        PhysTypeImpl.of(
-            implementor.getTypeFactory(),
-            getRowType(),
-            pref == Prefer.ARRAY
-                ? JavaRowFormat.ARRAY : JavaRowFormat.SCALAR);
     return implementor.result(physType, builder.toBlock());
+  }
+
+  /**
+   * Builds the replacement row for an UPDATE source row.
+   *
+   * <p>The source row layout is:
+   * {@code [originalField_0, ..., originalField_N-1, newValue_0, ..., newValue_M-1]}
+   * where {@code N = tableFieldCount} is the full width of the table row
+   * (i.e. <em>all</em> original columns, not just those being updated) and
+   * {@code M = updateColumnIndices.length}. The result is a copy of the first
+   * {@code N} fields with the trailing new values substituted at the indicated
+   * column positions; columns not named in the SET clause therefore retain
+   * their original values.
+   *
+   * @param row                 Source row (full original row followed by new
+   *                            values for the SET columns)
+   * @param tableFieldCount     Number of fields in the original table row
+   * @param updateColumnIndices 0-based indices of the columns being updated
+   * @return The replacement row
+   */
+  public static Object[] applyUpdate(
+      Object[] row,
+      int tableFieldCount,
+      int[] updateColumnIndices) {
+    final Object[] newRow = Arrays.copyOf(row, tableFieldCount);
+    for (int i = 0; i < updateColumnIndices.length; i++) {
+      newRow[updateColumnIndices[i]] = row[tableFieldCount + i];
+    }
+    return newRow;
   }
 
 }

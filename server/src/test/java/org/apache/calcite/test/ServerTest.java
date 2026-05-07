@@ -108,6 +108,43 @@ class ServerTest {
     executor.execute((SqlTruncateTable) o, context);
   }
 
+  @Test void testUpdate() throws Exception {
+    try (Connection c = connect();
+         Statement s = c.createStatement()) {
+      s.execute("create table t (i int not null, j int not null)");
+      s.executeUpdate("insert into t values (1, 10)");
+      s.executeUpdate("insert into t values (2, 20)");
+      s.executeUpdate("insert into t values (3, 30)");
+
+      // Update one row
+      int count = s.executeUpdate("update t set j = 99 where i = 2");
+      assertThat(count, is(1));
+
+      try (ResultSet r = s.executeQuery("select i, j from t order by i")) {
+        assertThat(r.next(), is(true));
+        assertThat(r.getInt(1), is(1));
+        assertThat(r.getInt(2), is(10));
+        assertThat(r.next(), is(true));
+        assertThat(r.getInt(1), is(2));
+        assertThat(r.getInt(2), is(99));
+        assertThat(r.next(), is(true));
+        assertThat(r.getInt(1), is(3));
+        assertThat(r.getInt(2), is(30));
+        assertThat(r.next(), is(false));
+      }
+
+      // Update multiple rows
+      count = s.executeUpdate("update t set j = 0 where i > 1");
+      assertThat(count, is(2));
+
+      try (ResultSet r = s.executeQuery("select sum(j) from t")) {
+        assertThat(r.next(), is(true));
+        assertThat(r.getInt(1), is(10));
+        assertThat(r.next(), is(false));
+      }
+    }
+  }
+
   @Test void testStatement() throws Exception {
     try (Connection c = connect();
          Statement s = c.createStatement();
