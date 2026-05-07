@@ -17,8 +17,7 @@
 package org.apache.calcite.adapter.enumerable;
 
 import org.apache.calcite.adapter.java.JavaTypeFactory;
-import org.apache.calcite.linq4j.Enumerable;
-import org.apache.calcite.linq4j.Enumerator;
+import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
@@ -42,10 +41,7 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
-import java.util.ListIterator;
-import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
@@ -115,9 +111,15 @@ public class EnumerableTableModify extends TableModify
                 ? JavaRowFormat.ARRAY : JavaRowFormat.SCALAR);
 
     if (getOperation() == Operation.UPDATE) {
-      // For UPDATE, the child produces rows with tableFieldCount + M fields:
-      // [originalField_0, ..., originalField_N-1, newValue_0, ..., newValue_M-1]
-      // where M = updateColumnList.size().
+      // For UPDATE, the child produces, for each row matched by the WHERE
+      // clause, a row of tableFieldCount + M fields:
+      //   [originalField_0, ..., originalField_N-1, newValue_0, ..., newValue_M-1]
+      // The first N fields are the *entire* original table row (all columns,
+      // not just those being updated); the trailing M = updateColumnList.size()
+      // fields are the new values, one per column named in the SET clause.
+      // Filtering by WHERE has already been applied upstream, so every source
+      // row corresponds to an existing row in the modifiable collection and
+      // can be located by full-row content equality.
       final List<String> updateCols = requireNonNull(getUpdateColumnList());
       final List<RelDataTypeField> tableFields = table.getRowType().getFieldList();
       final int tableFieldCount = tableFields.size();
@@ -136,16 +138,47 @@ public class EnumerableTableModify extends TableModify
         }
         updateColumnIndices[i] = found;
       }
+
+      // Build the three lambdas required by ExtendedEnumerable.update:
+      //   sinkKeySelector:   row -> Arrays.asList(row)
+      //   sourceKeySelector: row -> Arrays.asList(Arrays.copyOf(row, N))
+      //   sourceTransform:   row -> applyUpdate(row, N, updateColumnIndices)
+      final ParameterExpression sinkRow =
+          Expressions.parameter(Object[].class, "sinkRow");
+      final Expression sinkKeySelector =
+          Expressions.lambda(Function1.class,
+              Expressions.call(Arrays.class, "asList", sinkRow),
+              sinkRow);
+
+      final ParameterExpression srcKeyRow =
+          Expressions.parameter(Object[].class, "row");
+      final Expression sourceKeySelector =
+          Expressions.lambda(Function1.class,
+              Expressions.call(Arrays.class, "asList",
+                  Expressions.call(Arrays.class, "copyOf",
+                      srcKeyRow, Expressions.constant(tableFieldCount))),
+              srcKeyRow);
+
+      final ParameterExpression srcXformRow =
+          Expressions.parameter(Object[].class, "row");
+      final Expression sourceTransform =
+          Expressions.lambda(Function1.class,
+              Expressions.call(EnumerableTableModify.class, "applyUpdate",
+                  srcXformRow,
+                  Expressions.constant(tableFieldCount),
+                  Expressions.constant(updateColumnIndices)),
+              srcXformRow);
+
       final Expression updateCountExp =
           builder.append(
               "updateCount",
               Expressions.call(
-                  EnumerableTableModify.class,
-                  "update",
                   childExp,
-                  collectionParameter,
-                  Expressions.constant(tableFieldCount),
-                  Expressions.constant(updateColumnIndices)));
+                  BuiltInMethod.UPDATE.method,
+                  Expressions.convert_(collectionParameter, List.class),
+                  sinkKeySelector,
+                  sourceKeySelector,
+                  sourceTransform));
       builder.add(
           Expressions.return_(
               null,
@@ -226,60 +259,32 @@ public class EnumerableTableModify extends TableModify
   }
 
   /**
-   * Updates rows in a collection based on the source enumerable.
+   * Builds the replacement row for an UPDATE source row.
    *
-   * <p>Each row in {@code source} has the structure:
+   * <p>The source row layout is:
    * {@code [originalField_0, ..., originalField_N-1, newValue_0, ..., newValue_M-1]}
-   * where {@code N = tableFieldCount} and {@code M = updateColumnIndices.length}.
-   * The original row (first N fields) is located in the collection by value
-   * equality and replaced with the updated row.
+   * where {@code N = tableFieldCount} is the full width of the table row
+   * (i.e. <em>all</em> original columns, not just those being updated) and
+   * {@code M = updateColumnIndices.length}. The result is a copy of the first
+   * {@code N} fields with the trailing new values substituted at the indicated
+   * column positions; columns not named in the SET clause therefore retain
+   * their original values.
    *
-   * @param source            Source enumerable with original + new values
-   * @param collection        Collection to update (must be a {@link List} for
-   *                          in-place modification)
-   * @param tableFieldCount   Number of fields in the original table row
+   * @param row                 Source row (full original row followed by new
+   *                            values for the SET columns)
+   * @param tableFieldCount     Number of fields in the original table row
    * @param updateColumnIndices 0-based indices of the columns being updated
-   * @return Count of updated rows
+   * @return The replacement row
    */
-  @SuppressWarnings({"rawtypes", "unchecked"})
-  public static long update(
-      Enumerable<Object[]> source,
-      Collection collection,
+  public static Object[] applyUpdate(
+      Object[] row,
       int tableFieldCount,
       int[] updateColumnIndices) {
-    if (!(collection instanceof List)) {
-      throw new IllegalArgumentException(
-          "UPDATE requires the modifiable collection to be a List; got "
-              + collection.getClass().getName());
+    final Object[] newRow = Arrays.copyOf(row, tableFieldCount);
+    for (int i = 0; i < updateColumnIndices.length; i++) {
+      newRow[updateColumnIndices[i]] = row[tableFieldCount + i];
     }
-    // Build a map from original row content (using List for content-equality) to
-    // the corresponding new row. This allows a single O(n) pass over the
-    // collection rather than an O(n*m) nested scan.
-    final Map<List<Object>, Object[]> updateMap = new HashMap<>();
-    try (Enumerator<Object[]> e = source.enumerator()) {
-      while (e.moveNext()) {
-        final Object[] row = e.current();
-        final Object[] oldRow = Arrays.copyOf(row, tableFieldCount);
-        final Object[] newRow = Arrays.copyOf(row, tableFieldCount);
-        for (int i = 0; i < updateColumnIndices.length; i++) {
-          newRow[updateColumnIndices[i]] = row[tableFieldCount + i];
-        }
-        // Arrays.asList provides content-based equals/hashCode for use as a map key.
-        updateMap.put(Arrays.asList(oldRow), newRow);
-      }
-    }
-    final List<Object[]> list = (List<Object[]>) collection;
-    int updateCount = 0;
-    final ListIterator<Object[]> it = list.listIterator();
-    while (it.hasNext()) {
-      final Object[] current = it.next();
-      final Object[] newRow = updateMap.get(Arrays.asList(current));
-      if (newRow != null) {
-        it.set(newRow);
-        updateCount++;
-      }
-    }
-    return updateCount;
+    return newRow;
   }
 
 }
