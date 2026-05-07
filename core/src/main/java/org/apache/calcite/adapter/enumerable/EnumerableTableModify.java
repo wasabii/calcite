@@ -42,8 +42,10 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
@@ -122,12 +124,17 @@ public class EnumerableTableModify extends TableModify
       final int[] updateColumnIndices = new int[updateCols.size()];
       for (int i = 0; i < updateCols.size(); i++) {
         final String colName = updateCols.get(i);
+        int found = -1;
         for (int j = 0; j < tableFields.size(); j++) {
           if (tableFields.get(j).getName().equals(colName)) {
-            updateColumnIndices[i] = j;
+            found = j;
             break;
           }
         }
+        if (found < 0) {
+          throw new AssertionError("column '" + colName + "' not found in table");
+        }
+        updateColumnIndices[i] = found;
       }
       final Expression updateCountExp =
           builder.append(
@@ -240,31 +247,36 @@ public class EnumerableTableModify extends TableModify
       Collection collection,
       int tableFieldCount,
       int[] updateColumnIndices) {
-    final List<Object[]> oldRows = new ArrayList<>();
-    final List<Object[]> newRows = new ArrayList<>();
+    if (!(collection instanceof List)) {
+      throw new IllegalArgumentException(
+          "UPDATE requires the modifiable collection to be a List; got "
+              + collection.getClass().getName());
+    }
+    // Build a map from original row content (using List for content-equality) to
+    // the corresponding new row. This allows a single O(n) pass over the
+    // collection rather than an O(n*m) nested scan.
+    final Map<List<Object>, Object[]> updateMap = new HashMap<>();
     try (Enumerator<Object[]> e = source.enumerator()) {
       while (e.moveNext()) {
         final Object[] row = e.current();
         final Object[] oldRow = Arrays.copyOf(row, tableFieldCount);
-        final Object[] newRow = oldRow.clone();
+        final Object[] newRow = Arrays.copyOf(row, tableFieldCount);
         for (int i = 0; i < updateColumnIndices.length; i++) {
           newRow[updateColumnIndices[i]] = row[tableFieldCount + i];
         }
-        oldRows.add(oldRow);
-        newRows.add(newRow);
+        // Arrays.asList provides content-based equals/hashCode for use as a map key.
+        updateMap.put(Arrays.asList(oldRow), newRow);
       }
     }
     final List<Object[]> list = (List<Object[]>) collection;
     int updateCount = 0;
-    for (int u = 0; u < oldRows.size(); u++) {
-      final Object[] oldRow = oldRows.get(u);
-      final ListIterator<Object[]> it = list.listIterator();
-      while (it.hasNext()) {
-        if (Arrays.equals(it.next(), oldRow)) {
-          it.set(newRows.get(u));
-          updateCount++;
-          break;
-        }
+    final ListIterator<Object[]> it = list.listIterator();
+    while (it.hasNext()) {
+      final Object[] current = it.next();
+      final Object[] newRow = updateMap.get(Arrays.asList(current));
+      if (newRow != null) {
+        it.set(newRow);
+        updateCount++;
       }
     }
     return updateCount;
