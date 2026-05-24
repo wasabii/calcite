@@ -21,6 +21,7 @@ import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.BlockStatement;
 import org.apache.calcite.linq4j.tree.Blocks;
 import org.apache.calcite.linq4j.tree.ClassDeclaration;
+import org.apache.calcite.linq4j.tree.ConditionalExpression;
 import org.apache.calcite.linq4j.tree.DeclarationStatement;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
@@ -1154,6 +1155,17 @@ public class ExpressionTest {
         is(int.class));
     assertThat(Expressions.negate(Expressions.constant((byte) 1)).getType(),
         is(int.class));
+  }
+
+  @Test void testConditionalExpressionListIsPublic() {
+    final List<Node> expressionList =
+        ImmutableList.of(
+            Expressions.constant(true),
+            Expressions.constant(1),
+            Expressions.constant(2));
+    final ConditionalExpression conditionalExpression =
+        new ConditionalExpression(expressionList, Integer.TYPE);
+    assertThat(conditionalExpression.expressionList, is(expressionList));
   }
 
   @Test void testCompile() {
