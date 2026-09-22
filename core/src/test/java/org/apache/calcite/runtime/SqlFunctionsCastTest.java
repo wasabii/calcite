@@ -16,6 +16,9 @@
  */
 package org.apache.calcite.runtime;
 
+import org.apache.calcite.runtime.rtti.BasicSqlTypeRtti;
+import org.apache.calcite.runtime.rtti.RuntimeTypeInformation.RuntimeSqlTypeName;
+import org.apache.calcite.runtime.variant.VariantValue;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.UuidValue;
 
@@ -170,6 +173,29 @@ class SqlFunctionsCastTest {
         () -> cast("not a uuid", SqlTypeName.UUID));
   }
 
+  /** Tests casting to VARIANT: the value is wrapped and tagged with the
+   * caller-supplied source type, since the value alone need not determine it
+   * -- the same Java value can be tagged as different SQL types. */
+  @Test void testCastToVariant() {
+    final CastSpec variant =
+        new CastSpec(SqlTypeName.VARIANT, -1, -1, RoundingMode.DOWN);
+
+    final Object asVarchar =
+        SqlFunctions.cast("5",
+            new BasicSqlTypeRtti(RuntimeSqlTypeName.VARCHAR), variant);
+    assertThat(asVarchar, instanceOf(VariantValue.class));
+    assertThat(((VariantValue) asVarchar).getTypeString(), is("VARCHAR"));
+
+    final Object asInteger =
+        SqlFunctions.cast(5,
+            new BasicSqlTypeRtti(RuntimeSqlTypeName.INTEGER), variant);
+    assertThat(((VariantValue) asInteger).getTypeString(), is("INTEGER"));
+
+    // The source is required: the value alone does not determine it.
+    assertThrows(NullPointerException.class,
+        () -> SqlFunctions.cast(5, null, variant));
+  }
+
   @Test void testCastArray() {
     assertThat(castArray(Arrays.asList(1, 2), SqlTypeName.DOUBLE, 1),
         is(Arrays.asList(1.0d, 2.0d)));
@@ -225,7 +251,7 @@ class SqlFunctionsCastTest {
 
   private static @Nullable Object cast(@Nullable Object value,
       SqlTypeName typeName, int precision, int scale) {
-    return SqlFunctions.cast(value,
+    return SqlFunctions.cast(value, null,
         new CastSpec(typeName, precision, scale, RoundingMode.DOWN));
   }
 
@@ -235,6 +261,6 @@ class SqlFunctionsCastTest {
     for (int i = 0; i < depth; i++) {
       spec = new CastSpec(SqlTypeName.ARRAY, spec);
     }
-    return SqlFunctions.cast(value, spec);
+    return SqlFunctions.cast(value, null, spec);
   }
 }

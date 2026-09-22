@@ -39,6 +39,8 @@ import org.apache.calcite.linq4j.tree.UnsignedType;
 import org.apache.calcite.rel.type.TimeFrame;
 import org.apache.calcite.rel.type.TimeFrameSet;
 import org.apache.calcite.runtime.FlatLists.ComparableList;
+import org.apache.calcite.runtime.rtti.RuntimeTypeInformation;
+import org.apache.calcite.runtime.variant.VariantSqlValue;
 import org.apache.calcite.runtime.variant.VariantValue;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlUtil;
@@ -5648,11 +5650,18 @@ public class SqlFunctions {
    * this method does not handle, so that a caller such as
    * {@code JSON_VALUE} can apply its {@code ON ERROR} clause.
    *
-   * @param value Value to convert
-   * @param spec  Description of the conversion target; a target type of
-   *              {@link SqlTypeName#ANY} returns the value unchanged
+   * @param value  Value to convert
+   * @param source Runtime type of the value, or null. Only a cast to
+   *               {@code VARIANT} needs it -- to tag the value with its
+   *               source type, which the value alone does not determine (an
+   *               {@code int} may be an {@code INTEGER}, a {@code DATE} or a
+   *               {@code TIME}). The caller, which knows the type, supplies
+   *               it; every other target type ignores it.
+   * @param spec   Description of the conversion target; a target type of
+   *               {@link SqlTypeName#ANY} returns the value unchanged
    */
-  static @Nullable Object cast(@Nullable Object value, CastSpec spec) {
+  static @Nullable Object cast(@Nullable Object value,
+      @Nullable RuntimeTypeInformation source, CastSpec spec) {
     final SqlTypeName typeName = spec.getTypeName();
     if (value == null || typeName == SqlTypeName.ANY) {
       return value;
@@ -5671,10 +5680,13 @@ public class SqlFunctions {
       if (component == null || !(value instanceof Collection)) {
         return cannotConvert(value, typeName);
       }
+      final RuntimeTypeInformation elementSource =
+          source != null && !source.isScalar()
+              ? source.asGeneric().getTypeArgument(0) : null;
       final Collection<?> collection = (Collection<?>) value;
       final List<@Nullable Object> list = new ArrayList<>(collection.size());
       for (Object element : collection) {
-        list.add(cast(element, component));
+        list.add(cast(element, elementSource, component));
       }
       return list;
     }
@@ -5728,6 +5740,13 @@ public class SqlFunctions {
       return SpatialTypeFunctions.ST_GeomFromEWKT(charValue(value, typeName));
     case UUID:
       return UuidValue.fromString(charValue(value, typeName));
+    case VARIANT:
+      // A VARIANT wraps the value tagged with its runtime type. That type is
+      // the caller-supplied source, since the value alone does not determine
+      // it.
+      return VariantSqlValue.create(roundingMode, value,
+          requireNonNull(source,
+              "source type is required to cast to VARIANT"));
     default:
       return cannotConvert(value, typeName);
     }
