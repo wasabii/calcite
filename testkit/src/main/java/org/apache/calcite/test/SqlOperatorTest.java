@@ -7175,6 +7175,13 @@ public class SqlOperatorTest {
             + "error on error)",
         "(?s).*Cannot convert 20200101 to DATE.*", true);
 
+    // JSON_VALUE can return VARIANT: the extracted scalar is wrapped and
+    // tagged with its JSON type, which is unambiguous.
+    f.checkScalar("json_value('{\"c\":5}', '$.c' returning variant)",
+        "5", "VARIANT");
+    f.checkScalar("json_value('{\"c\":\"hi\"}', '$.c' returning variant)",
+        "\"hi\"", "VARIANT");
+
     // A UUID is parsed from a JSON string, as CAST parses a character value.
     f.checkScalar("json_value('{\"c\":"
             + "\"123e4567-e89b-12d3-a456-426655440000\"}', "

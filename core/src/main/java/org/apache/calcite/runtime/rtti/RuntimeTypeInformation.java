@@ -31,8 +31,11 @@ import static java.util.Objects.requireNonNull;
 /**
  * The type of a SQL expression at runtime.
  * Normally SQL is a statically-typed language, and there is no need for
- * runtime-type information. However, the VARIANT data type is actually
- * a dynamically-typed value, and needs this kind of information.
+ * runtime-type information. It is needed where a value's type is not known
+ * statically: the VARIANT data type is a dynamically-typed value that
+ * carries it, and a runtime CAST (see
+ * {@link org.apache.calcite.runtime.SqlFunctions#cast}) takes it to describe
+ * the source value, whose type the value alone may not determine.
  * We cannot use the very similar RelDataType type since it carries extra
  * baggage, like the type system, which is not available at runtime. */
 public abstract class RuntimeTypeInformation {

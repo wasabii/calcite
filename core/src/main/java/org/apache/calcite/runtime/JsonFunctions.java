@@ -17,6 +17,9 @@
 package org.apache.calcite.runtime;
 
 import org.apache.calcite.linq4j.function.Deterministic;
+import org.apache.calcite.runtime.rtti.BasicSqlTypeRtti;
+import org.apache.calcite.runtime.rtti.RuntimeTypeInformation;
+import org.apache.calcite.runtime.rtti.RuntimeTypeInformation.RuntimeSqlTypeName;
 import org.apache.calcite.sql.SqlJsonConstructorNullClause;
 import org.apache.calcite.sql.SqlJsonExistsErrorBehavior;
 import org.apache.calcite.sql.SqlJsonQueryEmptyOrErrorBehavior;
@@ -96,6 +99,36 @@ public class JsonFunctions {
       return false;
     }
     return true;
+  }
+
+  /** Returns the runtime type of a value read from a JSON document, or null
+   * if it is null or of a type this does not classify. A JSON value maps to a
+   * SQL type without the ambiguity a general runtime value has -- a JSON
+   * number is a number, never a datetime -- so the value alone is enough.
+   * Used to describe the source when {@code JSON_VALUE} or {@code JSON_QUERY}
+   * casts to {@code VARIANT}, which needs the source type. */
+  private static @Nullable RuntimeTypeInformation rttiOf(@Nullable Object value) {
+    // These are the only scalar Java types a JSON document produces: a string,
+    // a boolean, and (from a number) an Integer, Long or Double.
+    final RuntimeSqlTypeName typeName;
+    if (value instanceof String) {
+      typeName = RuntimeSqlTypeName.VARCHAR;
+    } else if (value instanceof Boolean) {
+      typeName = RuntimeSqlTypeName.BOOLEAN;
+    } else if (value instanceof Integer) {
+      typeName = RuntimeSqlTypeName.INTEGER;
+    } else if (value instanceof Long) {
+      typeName = RuntimeSqlTypeName.BIGINT;
+    } else if (value instanceof Double) {
+      typeName = RuntimeSqlTypeName.DOUBLE;
+    } else {
+      // A composite value (array or object), an integer too large for a long
+      // (BigInteger), or an otherwise unrecognized value is not classified
+      // from the value alone; a cast to VARIANT then reports that it cannot
+      // convert.
+      return null;
+    }
+    return new BasicSqlTypeRtti(typeName);
   }
 
   public static String jsonize(@Nullable Object input) {
@@ -302,7 +335,7 @@ public class JsonFunctions {
                   value.toString()).ex();
         } else {
           try {
-            return SqlFunctions.cast(value, spec);
+            return SqlFunctions.cast(value, rttiOf(value), spec);
           } catch (Exception e) {
             // A failed conversion is an error, so ON ERROR applies.
             exc = e;
@@ -409,7 +442,7 @@ public class JsonFunctions {
             }
           } else {
             try {
-              return SqlFunctions.cast(value, spec);
+              return SqlFunctions.cast(value, rttiOf(value), spec);
             } catch (Exception e) {
               // A failed conversion is an error, so ON ERROR applies.
               exc = e;
@@ -441,8 +474,10 @@ public class JsonFunctions {
      * {@code RETURNING DOUBLE DEFAULT 1 ON EMPTY}. */
     private static @Nullable Object convertDefaultValue(@Nullable Object value,
         CastSpec spec) {
+      // The target is a numeric type, which does not use the source, so
+      // pass null rather than deriving it from this (non-JSON) default value.
       return SqlTypeName.NUMERIC_TYPES.contains(spec.getTypeName())
-          ? SqlFunctions.cast(value, spec)
+          ? SqlFunctions.cast(value, null, spec)
           : value;
     }
 
