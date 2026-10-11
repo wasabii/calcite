@@ -8125,6 +8125,21 @@ class RelOptRulesTest extends RelOptTestBase {
         .check();
   }
 
+  /** As {@link #testProjectAggregateMergeSum0()} but the Aggregate has a group
+   * key and another aggregate call. The SUM0 that replaces
+   * {@code COALESCE(SUM(x), 0)} is added to the end of the aggregate calls, so
+   * the Project must reference it past the group keys; referencing it by its
+   * position among the aggregate calls alone points at the COUNT instead. */
+  @Test void testProjectAggregateMergeSum0WithGroupKey() {
+    final String sql = "select deptno, coalesce(sum_mgr, 0) as sm0, c\n"
+        + "from (\n"
+        + "  select deptno, sum(mgr) as sum_mgr, count(*) as c\n"
+        + "  from sales.emp\n"
+        + "  group by deptno)";
+    sql(sql).withRule(CoreRules.PROJECT_AGGREGATE_MERGE)
+        .check();
+  }
+
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-6834">[CALCITE-6834]
    * In query that applies COALESCE to nullable SUM, EnumerableProjectToCalcRule
