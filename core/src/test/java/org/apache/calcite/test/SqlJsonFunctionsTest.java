@@ -17,6 +17,7 @@
 package org.apache.calcite.test;
 
 import org.apache.calcite.runtime.CalciteException;
+import org.apache.calcite.runtime.CastSpec;
 import org.apache.calcite.runtime.JsonFunctions;
 import org.apache.calcite.runtime.SqlFunctions;
 import org.apache.calcite.sql.SqlJsonConstructorNullClause;
@@ -24,6 +25,7 @@ import org.apache.calcite.sql.SqlJsonExistsErrorBehavior;
 import org.apache.calcite.sql.SqlJsonQueryEmptyOrErrorBehavior;
 import org.apache.calcite.sql.SqlJsonQueryWrapperBehavior;
 import org.apache.calcite.sql.SqlJsonValueEmptyOrErrorBehavior;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.BuiltInMethod;
 
 import com.google.common.primitives.Longs;
@@ -35,6 +37,7 @@ import org.hamcrest.Description;
 import org.hamcrest.Matcher;
 import org.junit.jupiter.api.Test;
 
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -698,6 +701,15 @@ class SqlJsonFunctionsTest {
             context, errorBehavior), matcher);
   }
 
+  /** Target of the conversions in the JSON_VALUE tests. */
+  private static final CastSpec VARCHAR =
+      new CastSpec(SqlTypeName.VARCHAR, -1, -1);
+
+  /** Target of the conversions in the JSON_QUERY tests that do not
+   * jsonize. */
+  private static final CastSpec VARCHAR_ARRAY =
+      new CastSpec(SqlTypeName.ARRAY, VARCHAR);
+
   private void assertJsonValueAny(JsonFunctions.JsonPathContext context,
       SqlJsonValueEmptyOrErrorBehavior emptyBehavior,
       Object defaultValueOnEmpty,
@@ -710,7 +722,8 @@ class SqlJsonFunctionsTest {
         invocationDesc(BuiltInMethod.JSON_VALUE, context, emptyBehavior,
             defaultValueOnEmpty, errorBehavior, defaultValueOnError),
         f.jsonValue(context, emptyBehavior, defaultValueOnEmpty,
-            errorBehavior, defaultValueOnError),
+            errorBehavior, defaultValueOnError,
+            VARCHAR, RoundingMode.DOWN),
         matcher);
   }
 
@@ -726,7 +739,8 @@ class SqlJsonFunctionsTest {
         invocationDesc(BuiltInMethod.JSON_VALUE, input, emptyBehavior,
             defaultValueOnEmpty, errorBehavior, defaultValueOnError),
         () -> f.jsonValue(input, emptyBehavior,
-            defaultValueOnEmpty, errorBehavior, defaultValueOnError),
+            defaultValueOnEmpty, errorBehavior, defaultValueOnError,
+            VARCHAR, RoundingMode.DOWN),
         matcher);
   }
 
@@ -750,7 +764,8 @@ class SqlJsonFunctionsTest {
         invocationDesc(BuiltInMethod.JSON_QUERY, input, wrapperBehavior,
             emptyBehavior, errorBehavior),
         f.jsonQuery(input, wrapperBehavior, emptyBehavior,
-            errorBehavior, jsonize),
+            errorBehavior, jsonize,
+            VARCHAR_ARRAY, RoundingMode.DOWN),
         matcher);
   }
 
@@ -765,7 +780,8 @@ class SqlJsonFunctionsTest {
         invocationDesc(BuiltInMethod.JSON_QUERY, input, wrapperBehavior,
             emptyBehavior, errorBehavior),
         () -> f.jsonQuery(input, wrapperBehavior, emptyBehavior,
-            errorBehavior, true),
+            errorBehavior, true,
+            VARCHAR_ARRAY, RoundingMode.DOWN),
         matcher);
   }
 

@@ -40,12 +40,14 @@ import org.apache.calcite.linq4j.tree.UnsignedType;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeFactoryImpl;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexPatternFieldRef;
 import org.apache.calcite.rex.RexWindowExclusion;
+import org.apache.calcite.runtime.CastSpec;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.PairList;
 import org.apache.calcite.runtime.SqlFunctions;
@@ -3364,6 +3366,61 @@ public class RexImpTable implements RexImplementorTable {
     }
   }
 
+  /** Base class for the implementors of {@code JSON_VALUE} and
+   * {@code JSON_QUERY}. */
+  private abstract static class JsonImplementor extends MethodImplementor {
+    JsonImplementor(Method method) {
+      super(method, NullPolicy.ARG0, false);
+    }
+
+    /** Adds the operands that describe the conversion of the result to
+     * {@code type}: the {@link CastSpec} of the target, which drives a
+     * conversion recursively through composite types, and the rounding mode
+     * of a numeric conversion. */
+    static void addTargetOperands(RexToLixTranslator translator,
+        RelDataType type, List<Expression> operands) {
+      operands.add(castSpecExpression(type));
+      operands.add(
+          Expressions.constant(
+              translator.typeFactory.getTypeSystem().roundingMode()));
+    }
+
+    /** Builds an expression that constructs the {@link CastSpec} of
+     * {@code type}, recursing into the components of a composite type. */
+    static Expression castSpecExpression(RelDataType type) {
+      final SqlTypeName typeName = type.getSqlTypeName();
+      switch (typeName) {
+      case ARRAY:
+      case MULTISET:
+        return Expressions.new_(CastSpec.class,
+            Expressions.constant(typeName),
+            castSpecExpression(
+                requireNonNull(type.getComponentType(), "componentType")));
+      case MAP:
+        return Expressions.new_(CastSpec.class,
+            Expressions.constant(typeName),
+            castSpecExpression(requireNonNull(type.getKeyType(), "keyType")),
+            castSpecExpression(
+                requireNonNull(type.getValueType(), "valueType")));
+      case ROW:
+        final List<Expression> names = new ArrayList<>();
+        final List<Expression> specs = new ArrayList<>();
+        for (RelDataTypeField field : type.getFieldList()) {
+          names.add(Expressions.constant(field.getName()));
+          specs.add(castSpecExpression(field.getType()));
+        }
+        return Expressions.new_(CastSpec.class,
+            Expressions.newArrayInit(String.class, names),
+            Expressions.newArrayInit(CastSpec.class, specs));
+      default:
+        return Expressions.new_(CastSpec.class,
+            Expressions.constant(typeName),
+            Expressions.constant(type.getPrecision()),
+            Expressions.constant(Math.max(type.getScale(), -1)));
+      }
+    }
+  }
+
   /**
    * Implementor for JSON_VALUE function, convert to solid format
    * "JSON_VALUE(json_doc, path, empty_behavior, empty_default, error_behavior, error default)"
@@ -3372,9 +3429,9 @@ public class RexImpTable implements RexImplementorTable {
    * <p>We should avoid this when we support
    * variable arguments function.
    */
-  private static class JsonValueImplementor extends MethodImplementor {
+  private static class JsonValueImplementor extends JsonImplementor {
     JsonValueImplementor(Method method) {
-      super(method, NullPolicy.ARG0, false);
+      super(method);
     }
 
     @Override Expression implementSafe(RexToLixTranslator translator,
@@ -3421,20 +3478,20 @@ public class RexImpTable implements RexImplementorTable {
       newOperands.add(defaultValueOnEmpty);
       newOperands.add(errorBehavior);
       newOperands.add(defaultValueOnError);
-      List<Expression> argValueList0 =
-          EnumUtils.fromInternal(method.getParameterTypes(), newOperands);
-      final Expression target =
-          Expressions.new_(method.getDeclaringClass());
-      return Expressions.call(target, method, argValueList0);
+      addTargetOperands(translator, call.getType(), newOperands);
+      return Expressions.call(
+          Expressions.new_(method.getDeclaringClass()),
+          method,
+          EnumUtils.fromInternal(method.getParameterTypes(), newOperands));
     }
   }
 
   /**
    * Implementor for JSON_QUERY function. Passes the jsonize flag depending on the output type.
    */
-  private static class JsonQueryImplementor extends MethodImplementor {
+  private static class JsonQueryImplementor extends JsonImplementor {
     JsonQueryImplementor(Method method) {
-      super(method, NullPolicy.ARG0, false);
+      super(method);
     }
 
     @Override Expression implementSafe(RexToLixTranslator translator,
@@ -3449,11 +3506,13 @@ public class RexImpTable implements RexImplementorTable {
       }
       newOperands.add(jsonize);
 
-      List<Expression> argValueList0 =
-          EnumUtils.fromInternal(method.getParameterTypes(), newOperands);
-      final Expression target =
-          Expressions.new_(method.getDeclaringClass());
-      return Expressions.call(target, method, argValueList0);
+      // Unless the result is jsonized, the RETURNING type (an ARRAY, MAP, ROW
+      // or VARIANT, for example) drives the conversion of the value.
+      addTargetOperands(translator, call.getType(), newOperands);
+      return Expressions.call(
+          Expressions.new_(method.getDeclaringClass()),
+          method,
+          EnumUtils.fromInternal(method.getParameterTypes(), newOperands));
     }
   }
 

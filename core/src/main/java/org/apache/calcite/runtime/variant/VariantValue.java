@@ -16,9 +16,12 @@
  */
 package org.apache.calcite.runtime.variant;
 
+import org.apache.calcite.runtime.CastSpec;
 import org.apache.calcite.runtime.rtti.RuntimeTypeInformation;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
+
+import java.math.RoundingMode;
 
 /** Base class for the runtime support for values of the VARIANT SQL type. */
 public abstract class VariantValue {
@@ -38,6 +41,46 @@ public abstract class VariantValue {
    * if the value has the specified type, the value field is returned, otherwise a SQL
    * NULL is returned. */
   public abstract @Nullable Object cast(RuntimeTypeInformation type);
+
+  /**
+   * Converts this value to the type {@code target}, applying the rules of
+   * {@code CAST} to each scalar it contains, and throwing if the value does
+   * not fit the target.
+   *
+   * <p>The conversion walks the value and the target type together, recursing
+   * through {@code ARRAY}, {@code MULTISET}, {@code MAP} and {@code ROW}
+   * targets, and converts each scalar it reaches with
+   * {@link org.apache.calcite.runtime.SqlFunctions#cast}. A value that does
+   * not fit -- a scalar where an array is wanted, a string that is not a
+   * number, a number out of range -- is an error, so that a caller such as
+   * {@code JSON_VALUE} can apply its {@code ON ERROR} clause.
+   *
+   * <p>This differs from {@link #cast}, which implements
+   * {@code CAST(variant AS type)} and returns SQL {@code NULL} when the value
+   * does not have the requested type.
+   *
+   * <p>Conventions:
+   *
+   * <ul>
+   * <li>A {@code VARIANT} target returns the value unchanged, at any level.
+   * <li>A {@code VARIANT} null, or a {@code VARIANT} holding SQL
+   *   {@code NULL}, converts to SQL {@code NULL}.
+   * <li>A {@code ROW} target is read from a {@code MAP} (such as a JSON
+   *   object) or {@code ROW} value by field name, as {@link #item} looks it
+   *   up (so a field named {@code a} needs to be quoted). A field the value
+   *   lacks is {@code NULL}; an entry the row type lacks is ignored.
+   * <li>A scalar of type {@code BOOLEAN}, a numeric type, or a character type
+   *   converts as {@code CAST} converts it. A scalar of another type (such as
+   *   a {@code DATE}, held as an {@code int}) converts only to its own type.
+   * </ul>
+   *
+   * @param target       Type to convert to
+   * @param roundingMode Rounding mode of a numeric conversion
+   * @return The value in the representation generated code uses for
+   *         {@code target}, or null
+   */
+  public abstract @Nullable Object dynamicCast(CastSpec target,
+      RoundingMode roundingMode);
 
   // Implementation of the array index operator for VARIANT values
   public abstract @Nullable Object item(Object index);
