@@ -6973,7 +6973,12 @@ public class SqlOperatorTest {
         "100", "VARCHAR(2000)");
     f.checkScalar("json_value('{\"foo\":100}', 'strict $.foo' returning integer)",
         100, "INTEGER");
-    f.checkFails("json_value('{\"foo\":\"100\"}', 'strict $.foo' returning boolean)",
+    // A value that cannot be converted to the RETURNING type is an error,
+    // so the ON ERROR clause applies; NULL ON ERROR is the default.
+    f.checkScalar("json_value('{\"foo\":\"100\"}', 'strict $.foo' returning boolean)",
+        isNullValue(), "BOOLEAN");
+    f.checkFails("json_value('{\"foo\":\"100\"}', 'strict $.foo' returning boolean "
+            + "error on error)",
         INVALID_CHAR_MESSAGE, true);
     f.checkScalar("json_value('{\"foo\":100}', 'lax $.foo1' returning integer "
         + "null on empty)", isNullValue(), "INTEGER");
@@ -7045,6 +7050,192 @@ public class SqlOperatorTest {
             "(?s).*Illegal use of 'NULL'.*", false);
     f.checkString("json_value(null, 'strict $')", null, "VARCHAR(2000)");
     f.checkNull("json_value(cast(null as varchar), 'strict $')");
+  }
+
+  /** Tests the {@code RETURNING} clause of {@code JSON_VALUE}.
+   *
+   * <p>Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-7801">[CALCITE-7801]
+   * JSON_VALUE(..., RETURNING DOUBLE) throws ClassCastException when the JSON
+   * number is an integer</a>.
+   *
+   * <p>The extracted value is converted to the {@code RETURNING} type as if
+   * by {@code CAST}; a failed conversion is governed by {@code ON ERROR}. */
+  @Test void testJsonValueReturning() {
+    final SqlOperatorFixture f = fixture();
+
+    // Exact numeric in the document, approximate numeric in the RETURNING
+    // clause, and vice versa.
+    f.checkScalar("json_value('{\"c\":0}', '$.c' returning double)",
+        0.0, "DOUBLE");
+    f.checkScalar("json_value('{\"c\":100}', '$.c' returning double)",
+        100.0, "DOUBLE");
+    f.checkScalar("json_value('{\"c\":0.5}', '$.c' returning double)",
+        0.5, "DOUBLE");
+    f.checkScalar("json_value('{\"c\":0.5}', '$.c' returning integer)",
+        0, "INTEGER");
+    f.checkScalar("json_value('{\"c\":1.5}', '$.c' returning integer)",
+        1, "INTEGER");
+    f.checkScalar("json_value('{\"c\":-1.5}', '$.c' returning integer)",
+        -1, "INTEGER");
+
+    // All the numeric types are reachable from an integral JSON number.
+    f.checkScalar("json_value('{\"c\":1}', '$.c' returning tinyint)",
+        1, "TINYINT");
+    f.checkScalar("json_value('{\"c\":1}', '$.c' returning smallint)",
+        1, "SMALLINT");
+    f.checkScalar("json_value('{\"c\":1}', '$.c' returning integer)",
+        1, "INTEGER");
+    f.checkScalar("json_value('{\"c\":1}', '$.c' returning bigint)",
+        1, "BIGINT");
+    f.checkScalar("json_value('{\"c\":1}', '$.c' returning real)",
+        1.0, "REAL");
+    f.checkScalar("json_value('{\"c\":1}', '$.c' returning float)",
+        1.0, "FLOAT");
+    f.checkScalar("json_value('{\"c\":1}', '$.c' returning double)",
+        1.0, "DOUBLE");
+
+    // A JSON string converts to the RETURNING type just as CAST would.
+    f.checkScalar("json_value('{\"c\":\"100\"}', '$.c' returning integer)",
+        100, "INTEGER");
+    f.checkScalar("json_value('{\"c\":\"100\"}', '$.c' returning double)",
+        100.0, "DOUBLE");
+    f.checkScalar("json_value('{\"c\":\"true\"}', '$.c' returning boolean)",
+        true, "BOOLEAN");
+    f.checkScalar("json_value('{\"c\":true}', '$.c' returning boolean)",
+        true, "BOOLEAN");
+    f.checkScalar("json_value('{\"c\":false}', '$.c' returning boolean)",
+        false, "BOOLEAN");
+
+    // Every JSON scalar converts to a character type.
+    f.checkScalar("json_value('{\"c\":1}', '$.c' returning varchar(10))",
+        "1", "VARCHAR(10)");
+    f.checkScalar("json_value('{\"c\":1.5}', '$.c' returning varchar(10))",
+        "1.5", "VARCHAR(10)");
+    f.checkScalar("json_value('{\"c\":true}', '$.c' returning varchar(10))",
+        "true", "VARCHAR(10)");
+
+    // A conversion that fails is an error, and is therefore governed by the
+    // ON ERROR clause. NULL ON ERROR is the default.
+    f.checkScalar("json_value('{\"c\":\"abc\"}', '$.c' returning integer)",
+        isNullValue(), "INTEGER");
+    f.checkScalar("json_value('{\"c\":\"abc\"}', '$.c' returning integer "
+            + "null on error)",
+        isNullValue(), "INTEGER");
+    f.checkScalar("json_value('{\"c\":\"abc\"}', '$.c' returning integer "
+            + "default 42 on error)",
+        42, "INTEGER");
+    f.checkFails("json_value('{\"c\":\"abc\"}', '$.c' returning integer "
+            + "error on error)",
+        "(?s).*For input string: \"abc\".*", true);
+    f.checkScalar("json_value('{\"c\":\"100\"}', '$.c' returning boolean "
+            + "null on error)",
+        isNullValue(), "BOOLEAN");
+    f.checkFails("json_value('{\"c\":\"100\"}', '$.c' returning boolean "
+            + "error on error)",
+        "(?s).*Invalid character for cast: 100.*", true);
+
+    // An out-of-range value is an error too.
+    f.checkScalar("json_value('{\"c\":100000}', '$.c' returning tinyint "
+            + "null on error)",
+        isNullValue(), "TINYINT");
+    f.checkScalar("json_value('{\"c\":100000}', '$.c' returning tinyint "
+            + "default 0 on error)",
+        0, "TINYINT");
+
+
+    // A datetime is parsed from a JSON string, as CAST parses a character
+    // value; a JSON number is not a datetime, so converting one is an error.
+    f.checkScalar("json_value('{\"c\":\"2020-01-01\"}', '$.c' returning date)",
+        "2020-01-01", "DATE");
+    f.checkScalar("json_value('{\"c\":\"10:20:30\"}', '$.c' returning time)",
+        "10:20:30", "TIME(0)");
+    f.checkScalar("json_value('{\"c\":\"2020-01-01 10:20:30\"}', '$.c' "
+            + "returning timestamp)",
+        "2020-01-01 10:20:30", "TIMESTAMP(0)");
+    f.checkScalar("json_value('{\"c\":\"2020-01-01 10:20:30 UTC\"}', '$.c' "
+            + "returning timestamp with local time zone)",
+        "2020-01-01 10:20:30", "TIMESTAMP_WITH_LOCAL_TIME_ZONE(0)");
+    f.checkScalar("json_value('{\"c\":\"10:20:30 UTC\"}', '$.c' "
+            + "returning time with local time zone)",
+        "10:20:30", "TIME_WITH_LOCAL_TIME_ZONE(0)");
+    f.checkScalar("json_value('{\"c\":\"nope\"}', '$.c' returning date)",
+        isNullValue(), "DATE");
+    f.checkFails("json_value('{\"c\":\"nope\"}', '$.c' returning date "
+            + "error on error)",
+        "(?s).*Invalid DATE value, 'nope'.*", true);
+    f.checkScalar("json_value('{\"c\":\"nope\"}', '$.c' returning date "
+            + "default date '1970-01-02' on error)",
+        "1970-01-02", "DATE");
+    f.checkScalar("json_value('{\"c\":20200101}', '$.c' returning date)",
+        isNullValue(), "DATE");
+    f.checkFails("json_value('{\"c\":20200101}', '$.c' returning date "
+            + "error on error)",
+        "(?s).*Cannot convert 20200101 to DATE.*", true);
+
+    // JSON_VALUE can return VARIANT: the extracted scalar is wrapped and
+    // tagged with its JSON type, which is unambiguous.
+    f.checkScalar("json_value('{\"c\":5}', '$.c' returning variant)",
+        "5", "VARIANT");
+    f.checkScalar("json_value('{\"c\":\"hi\"}', '$.c' returning variant)",
+        "\"hi\"", "VARIANT");
+
+    // A UUID is parsed from a JSON string, as CAST parses a character value.
+    f.checkScalar("json_value('{\"c\":"
+            + "\"123e4567-e89b-12d3-a456-426655440000\"}', "
+            + "'$.c' returning uuid)",
+        "123e4567-e89b-12d3-a456-426655440000", "UUID");
+    f.checkScalar("json_value('{\"c\":\"not a uuid\"}', '$.c' returning uuid)",
+        isNullValue(), "UUID");
+    f.checkFails("json_value('{\"c\":\"not a uuid\"}', '$.c' returning uuid "
+            + "error on error)",
+        "(?s).*Invalid UUID string: not a uuid.*", true);
+
+    // The precision and scale of the RETURNING type are applied, as by CAST.
+    f.checkScalar("json_value('{\"c\":100}', '$.c' returning decimal(5,2))",
+        "100.00", "DECIMAL(5, 2)");
+    f.checkScalar("json_value('{\"c\":1.005}', '$.c' returning decimal(5,2))",
+        "1.00", "DECIMAL(5, 2)");
+    f.checkScalar("json_value('{\"c\":\"1.005\"}', '$.c' returning decimal(5,2))",
+        "1.00", "DECIMAL(5, 2)");
+    f.checkFails("json_value('{\"c\":123456}', '$.c' returning decimal(5,2) "
+            + "error on error)",
+        "(?s).*cannot be represented as a DECIMAL.*", true);
+
+    // A character type longer than the value pads, and shorter truncates.
+    f.checkScalar("json_value('{\"c\":\"abcdef\"}', '$.c' returning varchar(3))",
+        "abc", "VARCHAR(3)");
+    f.checkScalar("json_value('{\"c\":\"abcdef\"}', '$.c' returning char(3))",
+        "abc", "CHAR(3)");
+    f.checkScalar("'[' || json_value('{\"c\":\"ab\"}', '$.c' returning char(9))"
+            + " || ']'",
+        "[ab       ]", "CHAR(11)");
+
+    // Fractional seconds beyond the precision of the type are truncated.
+    f.checkScalar("json_value('{\"c\":\"2020-01-01 10:20:30.987\"}', '$.c' "
+            + "returning timestamp(0))",
+        "2020-01-01 10:20:30", "TIMESTAMP(0)");
+    f.checkScalar("json_value('{\"c\":\"2020-01-01 10:20:30.987\"}', '$.c' "
+            + "returning timestamp(3))",
+        "2020-01-01 10:20:30.987", "TIMESTAMP(3)");
+
+    // A binary RETURNING type encodes the JSON string's bytes with the
+    // default charset, as CAST does, truncating to the precision.
+    f.checkScalar("json_value('{\"c\":\"0102\"}', '$.c' returning varbinary(2))",
+        "3031", "VARBINARY(2)");
+
+    // JSON_VALUE returns a scalar, so an array RETURNING type never matches.
+    f.checkScalar("json_value('{\"c\":[1,2]}', '$.c' returning integer array)",
+        isNullValue(), "INTEGER ARRAY");
+
+    // The ON EMPTY clause still applies to an empty result, and its default
+    // value is converted to the RETURNING type as well.
+    f.checkScalar("json_value('{\"c\":1}', 'lax $.d' returning integer "
+            + "null on empty)",
+        isNullValue(), "INTEGER");
+    f.checkScalar("json_value('{\"c\":1}', 'lax $.d' returning double "
+            + "default 1 on empty)",
+        1.0, "DOUBLE");
   }
 
   @Test void testJsonQuery() {
@@ -7144,6 +7335,159 @@ public class SqlOperatorTest {
         "(?s).*Illegal use of 'NULL'.*", false);
     f.checkString("json_query(null, 'lax $')", null, "VARCHAR(2000)");
     f.checkNull("json_query(cast(null as varchar), 'lax $')");
+  }
+
+  /** Tests the {@code RETURNING ... ARRAY} clause of {@code JSON_QUERY}.
+   *
+   * <p>Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-7801">[CALCITE-7801]
+   * JSON_VALUE(..., RETURNING DOUBLE) throws ClassCastException when the JSON
+   * number is an integer</a>. Each element of the array is converted in the
+   * same way that {@code JSON_VALUE} converts a scalar. */
+  @Test void testJsonQueryReturningArray() {
+    final SqlOperatorFixture f = fixture();
+
+    f.checkScalar("json_query('{\"c\":[0,1]}', '$.c' returning integer array)",
+        "[0, 1]", "INTEGER ARRAY");
+    f.checkScalar("json_query('{\"c\":[0,1]}', '$.c' returning double array)",
+        "[0.0, 1.0]", "DOUBLE ARRAY");
+    f.checkScalar("json_query('{\"c\":[0,1]}', '$.c' returning bigint array)",
+        "[0, 1]", "BIGINT ARRAY");
+    f.checkScalar("json_query('{\"c\":[0.5,1.5]}', '$.c' "
+            + "returning integer array)",
+        "[0, 1]", "INTEGER ARRAY");
+    f.checkScalar("json_query('{\"c\":[\"0\",\"1\"]}', '$.c' "
+            + "returning integer array)",
+        "[0, 1]", "INTEGER ARRAY");
+    f.checkScalar("json_query('{\"c\":[0,1]}', '$.c' returning varchar array)",
+        "[0, 1]", "VARCHAR ARRAY");
+
+
+    f.checkScalar("json_query('{\"c\":[100,2]}', '$.c' "
+            + "returning decimal(5,2) array)",
+        "[100.00, 2.00]", "DECIMAL(5, 2) ARRAY");
+    f.checkScalar("json_query('{\"c\":[\"abcdef\"]}', '$.c' "
+            + "returning varchar(3) array)",
+        "[abc]", "VARCHAR(3) ARRAY");
+
+
+    // A nested array is converted element by element, to the depth of the
+    // value.
+    f.checkScalar("json_query('{\"c\":[[1,2],[3]]}', '$.c' "
+            + "returning double array array)",
+        "[[1.0, 2.0], [3.0]]", "DOUBLE ARRAY ARRAY");
+
+    // A value that is not an array cannot be converted to one, so the
+    // ON ERROR clause applies.
+    f.checkScalar("json_query('{\"c\":{\"x\":1}}', '$.c' "
+            + "returning integer array)",
+        isNullValue(), "INTEGER ARRAY");
+    f.checkScalar("json_query('{\"c\":{\"x\":1}}', '$.c' "
+            + "returning integer array empty array on error)",
+        "[]", "INTEGER ARRAY");
+
+    // A conversion that fails is governed by the ON ERROR clause;
+    // NULL ON ERROR is the default.
+    f.checkScalar("json_query('{\"c\":[\"a\"]}', '$.c' "
+            + "returning integer array)",
+        isNullValue(), "INTEGER ARRAY");
+    f.checkScalar("json_query('{\"c\":[\"a\"]}', '$.c' "
+            + "returning integer array null on error)",
+        isNullValue(), "INTEGER ARRAY");
+    f.checkScalar("json_query('{\"c\":[\"a\"]}', '$.c' "
+            + "returning integer array empty array on error)",
+        "[]", "INTEGER ARRAY");
+    f.checkFails("json_query('{\"c\":[\"a\"]}', '$.c' "
+            + "returning integer array error on error)",
+        "(?s).*For input string: \"a\".*", true);
+
+    // A JSON null element is NULL.
+    f.checkScalar("json_query('{\"c\":[1,null]}', '$.c' "
+            + "returning integer array)",
+        "[1, null]", "INTEGER ARRAY");
+  }
+
+  /** Tests the {@code RETURNING} clause of {@code JSON_QUERY} with a type
+   * other than an array or a character type: the type drives the conversion
+   * of the value at every level, an extension to the SQL standard.
+   *
+   * <p>Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-7801">[CALCITE-7801]
+   * JSON_VALUE(..., RETURNING DOUBLE) throws ClassCastException when the JSON
+   * number is an integer</a>. */
+  @Test void testJsonQueryReturningType() {
+    final SqlOperatorFixture f = fixture();
+
+    // A JSON object converts to a MAP, its values converted to the value
+    // type.
+    f.checkScalar("json_query('{\"c\":{\"x\":1,\"y\":\"2\"}}', '$.c' "
+            + "returning map<varchar, integer>)",
+        "{x=1, y=2}", "(VARCHAR NOT NULL, INTEGER) MAP");
+    f.checkScalar("json_query('{\"c\":{\"x\":[1,2]}}', '$.c' "
+            + "returning map<varchar, double array>)",
+        "{x=[1.0, 2.0]}", "(VARCHAR NOT NULL, DOUBLE ARRAY) MAP");
+    f.checkScalar("json_query('{\"c\":{\"x\":1,\"y\":null}}', '$.c' "
+            + "returning map<varchar, integer>)",
+        "{x=1, y=null}", "(VARCHAR NOT NULL, INTEGER) MAP");
+
+    // A JSON object converts to a ROW by field name, which must match
+    // exactly, as in CAST(variant AS ROW(...)); an unquoted name is upper
+    // case. A field the object lacks is NULL. Each field, and each MAP
+    // value, is nullable, whatever the RETURNING type says.
+    f.checkScalar("json_query('{\"c\":{\"a\":1,\"b\":\"x\"}}', '$.c' "
+            + "returning row(\"a\" integer, \"b\" varchar(5), \"z\" boolean))",
+        "{1, x, null}",
+        "RecordType(INTEGER a, VARCHAR(5) b, BOOLEAN z)");
+    f.checkScalar("json_query('{\"c\":{\"a\":1}}', '$.c' "
+            + "returning row(a integer))",
+        "{null}", "RecordType(INTEGER A)");
+    f.checkScalar("json_query('{\"c\":[{\"a\":1},{\"a\":2.5}]}', '$.c' "
+            + "returning row(\"a\" decimal(3, 1)) array)",
+        "[{1.0}, {2.5}]", "RecordType(DECIMAL(3, 1) a) ARRAY");
+
+    // A VARIANT holds the JSON value, each node with its natural type.
+    f.checkScalar("json_query('{\"c\":[1,\"a\",1.50]}', '$.c' "
+            + "returning variant)",
+        "[1, \"a\", 1.50]", "VARIANT");
+    f.checkScalar("json_query('{\"c\":[1,2]}', '$.c' "
+            + "returning variant array)",
+        "[1, 2]", "VARIANT ARRAY");
+
+    // The shape of the value must match the type, or ON ERROR applies. A
+    // scalar type never matches, since JSON_QUERY yields an array or object.
+    f.checkScalar("json_query('{\"c\":[1,2]}', '$.c' "
+            + "returning map<varchar, integer>)",
+        isNullValue(), "(VARCHAR NOT NULL, INTEGER) MAP");
+    f.checkScalar("json_query('{\"c\":[1,2]}', '$.c' returning integer)",
+        isNullValue(), "INTEGER");
+    f.checkFails("json_query('{\"c\":{\"x\":\"a\"}}', '$.c' "
+            + "returning map<varchar, integer> error on error)",
+        "(?s).*For input string: \"a\".*", true);
+  }
+
+  /** Tests that {@code JSON_VALUE} reads a number with a fraction as the
+   * {@code DECIMAL} its literal spells, not as a {@code DOUBLE}. */
+  @Test void testJsonValueDecimal() {
+    final SqlOperatorFixture f = fixture();
+    // To a character type, a number converts as its JSON text.
+    f.checkScalar("json_value('{\"c\":0.50}', '$.c' returning varchar(10))",
+        "0.50", "VARCHAR(10)");
+    f.checkScalar("json_value('{\"c\":1e2}', '$.c' returning varchar(10))",
+        "100", "VARCHAR(10)");
+    // JSON_QUERY writes numbers in plain notation, keeping their digits.
+    f.checkString("json_query('{\"c\":[1e2,1.50]}', '$.c')",
+        "[100,1.50]", "VARCHAR(2000)");
+    f.checkScalar("json_value('{\"c\":1.50}', '$.c' returning varchar(10))",
+        "1.50", "VARCHAR(10)");
+    f.checkScalar("json_value('{\"c\":0.1}', '$.c' returning decimal(19, 18))",
+        "0.100000000000000000", "DECIMAL(19, 18)");
+    f.checkScalar("json_value('{\"c\":1e2}', '$.c' returning integer)",
+        100, "INTEGER");
+    f.checkScalar("json_value('{\"c\":1.5}', '$.c' returning variant)",
+        "1.5", "VARIANT");
+    f.checkScalar("json_value('{\"c\":92233720368547758070}', '$.c' "
+            + "returning decimal(19, 0))",
+        isNullValue(), "DECIMAL(19, 0)");
   }
 
   @Test void testJsonPretty() {

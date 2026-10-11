@@ -2878,13 +2878,41 @@ In the following:
 |:---------------------- |:-----------
 | JSON_EXISTS(jsonValue, path [ { TRUE &#124; FALSE &#124; UNKNOWN &#124; ERROR } ON ERROR ] ) | Whether a *jsonValue* satisfies a search criterion described using JSON path expression *path*
 | JSON_VALUE(jsonValue, path [ RETURNING type ] [ { ERROR &#124; NULL &#124; DEFAULT expr } ON EMPTY ] [ { ERROR &#124; NULL &#124; DEFAULT expr } ON ERROR ] ) | Extract an SQL scalar from a *jsonValue* using JSON path expression *path*
-| JSON_QUERY(jsonValue, path [ { WITHOUT [ ARRAY ] &#124; WITH [ CONDITIONAL &#124; UNCONDITIONAL ] [ ARRAY ] } WRAPPER ] [ { ERROR &#124; NULL &#124; EMPTY ARRAY &#124; EMPTY OBJECT } ON EMPTY ] [ { ERROR &#124; NULL &#124; EMPTY ARRAY &#124; EMPTY OBJECT } ON ERROR ] ) | Extract a JSON object or JSON array from *jsonValue* using the *path* JSON path expression
+| JSON_QUERY(jsonValue, path [ RETURNING type ] [ { WITHOUT [ ARRAY ] &#124; WITH [ CONDITIONAL &#124; UNCONDITIONAL ] [ ARRAY ] } WRAPPER ] [ { ERROR &#124; NULL &#124; EMPTY ARRAY &#124; EMPTY OBJECT } ON EMPTY ] [ { ERROR &#124; NULL &#124; EMPTY ARRAY &#124; EMPTY OBJECT } ON ERROR ] ) | Extract a JSON object or JSON array from *jsonValue* using the *path* JSON path expression
 
 Note:
 
 * The `ON ERROR` and `ON EMPTY` clauses define the fallback
   behavior of the function when an error is thrown or a null value
   is about to be returned.
+* The `RETURNING` clause gives the type of the value that the function
+  returns; the default is `VARCHAR(2000)`. The value extracted from the
+  document is converted to that type as if by `CAST`, and a conversion that
+  fails is an error, and is therefore governed by the `ON ERROR` clause
+  (`NULL ON ERROR` by default; `ERROR ON ERROR` raises it).
+  * A JSON number is read exactly: an integer is an `INTEGER` or `BIGINT` if
+    it fits, and any other number is the `DECIMAL` its literal spells
+    (`1.50` is `DECIMAL(3, 2)`, `1e2` is `100`), not a `DOUBLE`.
+  * The precision and scale of the type are applied: a `DECIMAL(p, s)` is
+    scaled, a `CHAR(n)` or `VARCHAR(n)` is truncated or padded to *n*
+    characters, and fractional seconds beyond the precision of a datetime
+    type are truncated.
+  * A datetime, `BINARY`, `GEOMETRY` or `UUID` value is parsed from a JSON
+    string, as `CAST` parses a character value; converting a JSON number or
+    boolean to one is an error.
+  * In `JSON_VALUE`, a character type receives a JSON number or boolean as
+    its JSON text (`1.50`, `true`).
+  * In `JSON_QUERY`, a character type returns the JSON text of the array or
+    object. As an extension to standard SQL, any other type converts the
+    array or object recursively: an `ARRAY` or `MULTISET` element by
+    element; a `MAP` from a JSON object, member by member; a `ROW` from a
+    JSON object by field name, which must match exactly, as in
+    `CAST(variant AS ROW(...))`, so a lower-case name must be quoted,
+    `ROW("a" INT)`; and `VARIANT` holds the value as is, each node with the
+    type its JSON value has. A JSON `null`, or a field that the object lacks, is
+    `NULL`, so the elements, `MAP` values and `ROW` fields of the result are
+    nullable. A scalar type such as `INTEGER` never matches an array or
+    object, so the `ON ERROR` clause applies.
 * The `ARRAY WRAPPER` clause defines how to represent a JSON array result
   in `JSON_QUERY` function. The following examples compare the wrapper
   behaviors.

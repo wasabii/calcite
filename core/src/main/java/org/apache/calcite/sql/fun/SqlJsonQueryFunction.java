@@ -18,6 +18,7 @@ package org.apache.calcite.sql.fun;
 
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlFunction;
@@ -83,16 +84,42 @@ public class SqlJsonQueryFunction extends SqlFunction {
     return typeFactory.createTypeWithNullability(baseType, true);
   }
 
+  /** Derives the type of the result from the {@code RETURNING} type: the type
+   * itself, nullable at every level that a JSON document can leave empty,
+   * since a JSON {@code null}, or an object member that is absent, converts
+   * to SQL {@code NULL}. That is: the result; the elements of an
+   * {@code ARRAY} or {@code MULTISET}; the values (not the keys) of a
+   * {@code MAP}; the fields of a {@code ROW}. */
   private static RelDataType deriveExplicitType(SqlOperatorBinding opBinding, RelDataType type) {
-    if (SqlTypeName.ARRAY == type.getSqlTypeName()) {
+    final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+    switch (type.getSqlTypeName()) {
+    case ARRAY: {
       RelDataType elementType = requireNonNull(type.getComponentType());
       RelDataType nullableElementType = deriveExplicitType(opBinding, elementType);
-      return SqlTypeUtil.createArrayType(
-          opBinding.getTypeFactory(),
-          nullableElementType,
-          true);
+      return SqlTypeUtil.createArrayType(typeFactory, nullableElementType, true);
     }
-    return opBinding.getTypeFactory().createTypeWithNullability(type, true);
+    case MULTISET: {
+      RelDataType elementType = requireNonNull(type.getComponentType());
+      RelDataType nullableElementType = deriveExplicitType(opBinding, elementType);
+      return SqlTypeUtil.createMultisetType(typeFactory, nullableElementType, true);
+    }
+    case MAP: {
+      RelDataType keyType = requireNonNull(type.getKeyType());
+      RelDataType valueType =
+          deriveExplicitType(opBinding, requireNonNull(type.getValueType()));
+      return typeFactory.createTypeWithNullability(
+          typeFactory.createMapType(keyType, valueType), true);
+    }
+    case ROW: {
+      final RelDataTypeFactory.Builder builder = typeFactory.builder();
+      for (RelDataTypeField field : type.getFieldList()) {
+        builder.add(field.getName(), deriveExplicitType(opBinding, field.getType()));
+      }
+      return typeFactory.createTypeWithNullability(builder.build(), true);
+    }
+    default:
+      return typeFactory.createTypeWithNullability(type, true);
+    }
   }
 
   @Override public @Nullable String getSignatureTemplate(int operandsCount) {

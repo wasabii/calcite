@@ -16,10 +16,13 @@
  */
 package org.apache.calcite.runtime.variant;
 
+import org.apache.calcite.runtime.CastSpec;
 import org.apache.calcite.runtime.rtti.RuntimeTypeInformation;
+import org.apache.calcite.sql.type.SqlTypeName;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.math.RoundingMode;
 import java.util.Objects;
 
 /** A VARIANT value that contains a NULL runtime value. */
@@ -36,6 +39,12 @@ public class VariantSqlNull extends VariantSqlValue {
   @Override public @Nullable Object cast(RuntimeTypeInformation type) {
     // Result is always null
     return null;
+  }
+
+  @Override public @Nullable Object dynamicCast(CastSpec target,
+      RoundingMode roundingMode) {
+    // Kept as is for a VARIANT target, otherwise SQL NULL
+    return target.getTypeName() == SqlTypeName.VARIANT ? this : null;
   }
 
   @Override public String toString() {

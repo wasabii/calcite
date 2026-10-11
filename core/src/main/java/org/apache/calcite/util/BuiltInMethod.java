@@ -90,6 +90,7 @@ import org.apache.calcite.runtime.ArrayBindable;
 import org.apache.calcite.runtime.Automaton;
 import org.apache.calcite.runtime.BinarySearch;
 import org.apache.calcite.runtime.Bindable;
+import org.apache.calcite.runtime.CastSpec;
 import org.apache.calcite.runtime.CompressionFunctions;
 import org.apache.calcite.runtime.Enumerables;
 import org.apache.calcite.runtime.FlatLists;
@@ -521,12 +522,13 @@ public enum BuiltInMethod {
   JSON_VALUE(JsonFunctions.StatefulFunction.class, "jsonValue",
       String.class, String.class,
       SqlJsonValueEmptyOrErrorBehavior.class, Object.class,
-      SqlJsonValueEmptyOrErrorBehavior.class, Object.class),
+      SqlJsonValueEmptyOrErrorBehavior.class, Object.class,
+      CastSpec.class, RoundingMode.class),
   JSON_QUERY(JsonFunctions.StatefulFunction.class, "jsonQuery", String.class,
       String.class, SqlJsonQueryWrapperBehavior.class,
       SqlJsonQueryEmptyOrErrorBehavior.class,
       SqlJsonQueryEmptyOrErrorBehavior.class,
-      boolean.class),
+      boolean.class, CastSpec.class, RoundingMode.class),
   JSON_OBJECT(JsonFunctions.class, "jsonObject",
       SqlJsonConstructorNullClause.class),
   JSON_TYPE(JsonFunctions.class, "jsonType", String.class),

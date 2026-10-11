@@ -17,17 +17,27 @@
 package org.apache.calcite.runtime;
 
 import org.apache.calcite.linq4j.function.Deterministic;
+import org.apache.calcite.runtime.rtti.BasicSqlTypeRtti;
+import org.apache.calcite.runtime.rtti.RuntimeTypeInformation;
+import org.apache.calcite.runtime.rtti.RuntimeTypeInformation.RuntimeSqlTypeName;
+import org.apache.calcite.runtime.variant.VariantNull;
+import org.apache.calcite.runtime.variant.VariantSqlValue;
+import org.apache.calcite.runtime.variant.VariantValue;
 import org.apache.calcite.sql.SqlJsonConstructorNullClause;
 import org.apache.calcite.sql.SqlJsonExistsErrorBehavior;
 import org.apache.calcite.sql.SqlJsonQueryEmptyOrErrorBehavior;
 import org.apache.calcite.sql.SqlJsonQueryWrapperBehavior;
 import org.apache.calcite.sql.SqlJsonValueEmptyOrErrorBehavior;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.Util;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.core.PrettyPrinter;
+import com.fasterxml.jackson.core.StreamWriteFeature;
 import com.fasterxml.jackson.core.util.DefaultIndenter;
 import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -43,6 +53,9 @@ import com.jayway.jsonpath.spi.mapper.MappingProvider;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -74,8 +87,27 @@ public class JsonFunctions {
       Pattern.compile("^\\s*(?<mode>strict|lax)\\s+(?<spec>.+)$",
           Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE);
 
+  /** Provider for parsing and writing JSON. It writes a {@link BigDecimal}
+   * (such as a number that {@link #JSON_PATH_EXACT_JSON_PROVIDER} read) in
+   * plain notation, {@code 100} rather than {@code 1E+2}. */
   private static final JacksonJsonProvider JSON_PATH_JSON_PROVIDER =
-      new JacksonJsonProvider();
+      new JacksonJsonProvider(
+          JsonMapper.builder()
+              .enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN)
+              .build());
+  /** Provider that reads a JSON number with a fraction or exponent as a
+   * {@link BigDecimal}, keeping the digits of the literal, rather than as a
+   * {@code double}. Used to parse the documents of {@code JSON_EXISTS},
+   * {@code JSON_VALUE} and {@code JSON_QUERY}, whose values become
+   * {@code DECIMAL}s; see {@link #toVariant}. */
+  private static final JacksonJsonProvider JSON_PATH_EXACT_JSON_PROVIDER =
+      new JacksonJsonProvider(
+          JsonMapper.builder()
+              .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+              .enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN)
+              .build());
+  private static final RuntimeTypeInformation VARCHAR_RTTI =
+      new BasicSqlTypeRtti(RuntimeSqlTypeName.VARCHAR);
   private static final MappingProvider JSON_PATH_MAPPING_PROVIDER =
       new JacksonMappingProvider();
   private static final PrettyPrinter JSON_PRETTY_PRINTER =
@@ -97,6 +129,112 @@ public class JsonFunctions {
     return true;
   }
 
+  /** Converts a value read from a JSON document to a {@code VARIANT} value,
+   * each node of which has the natural SQL type of the JSON value it holds:
+   *
+   * <ul>
+   * <li>a JSON string is a {@code VARCHAR};
+   * <li>{@code true} and {@code false} are {@code BOOLEAN}s;
+   * <li>a number without a fraction or exponent is an {@code INTEGER} if it
+   *   fits, else a {@code BIGINT} if it fits, else a {@code DECIMAL};
+   * <li>a number with a fraction or exponent is a {@code DECIMAL} with the
+   *   digits of the literal ({@code 1.50} is {@code DECIMAL(3, 2)}); an
+   *   exponent that would give a negative scale is applied ({@code 1e2} is
+   *   {@code 100}, a {@code DECIMAL(3, 0)}). The precision is not limited to
+   *   the type system's maximum;
+   * <li>JSON {@code null} is the {@code VARIANT} null, including as an
+   *   element of an array or the value of an object member;
+   * <li>an array is an {@code ARRAY} of {@code VARIANT};
+   * <li>an object is a {@code MAP} from {@code VARCHAR} to {@code VARIANT}.
+   * </ul>
+   *
+   * <p>The children of an array or object are converted first and the
+   * container is built from them as they are (see
+   * {@link VariantSqlValue#createArray}), so no value is wrapped twice.
+   *
+   * @param json         Value from a JSON document, as parsed by Jackson
+   * @param roundingMode Rounding mode the {@code VARIANT} uses for numeric
+   *                     conversions
+   */
+  public static VariantValue toVariant(@Nullable Object json,
+      RoundingMode roundingMode) {
+    if (json == null) {
+      return VariantNull.getInstance();
+    }
+    if (json instanceof Map) {
+      final Map<?, ?> map = (Map<?, ?>) json;
+      final Map<VariantValue, VariantValue> entries =
+          new LinkedHashMap<>(map.size());
+      for (Map.Entry<?, ?> e : map.entrySet()) {
+        entries.put(
+            VariantSqlValue.create(roundingMode, String.valueOf(e.getKey()),
+                VARCHAR_RTTI),
+            toVariant(e.getValue(), roundingMode));
+      }
+      return VariantSqlValue.createMap(roundingMode, entries);
+    }
+    if (json instanceof Collection) {
+      final Collection<?> collection = (Collection<?>) json;
+      final List<VariantValue> elements = new ArrayList<>(collection.size());
+      for (Object element : collection) {
+        elements.add(toVariant(element, roundingMode));
+      }
+      return VariantSqlValue.createArray(roundingMode, elements);
+    }
+    if (json instanceof String) {
+      return VariantSqlValue.create(roundingMode, json, VARCHAR_RTTI);
+    }
+    if (json instanceof Boolean) {
+      return scalar(roundingMode, json, RuntimeSqlTypeName.BOOLEAN);
+    }
+    if (json instanceof BigDecimal) {
+      return decimal(roundingMode, (BigDecimal) json);
+    }
+    if (json instanceof Double || json instanceof Float) {
+      // A document parsed without USE_BIG_DECIMAL_FOR_FLOATS, such as the
+      // value of a FORMAT JSON expression. The shortest decimal that
+      // round-trips is the literal, for any literal a double holds exactly.
+      final double d = ((Number) json).doubleValue();
+      if (Double.isNaN(d) || Double.isInfinite(d)) {
+        return scalar(roundingMode, d, RuntimeSqlTypeName.DOUBLE);
+      }
+      return decimal(roundingMode, BigDecimal.valueOf(d));
+    }
+    if (json instanceof BigInteger) {
+      final BigInteger i = (BigInteger) json;
+      if (i.bitLength() < Long.SIZE) {
+        return integer(roundingMode, i.longValue());
+      }
+      return decimal(roundingMode, new BigDecimal(i));
+    }
+    if (json instanceof Number) {
+      // Integer or Long, or (from another source) Short or Byte
+      return integer(roundingMode, ((Number) json).longValue());
+    }
+    throw new IllegalArgumentException("Not a JSON value: " + json
+        + " (" + json.getClass() + ")");
+  }
+
+  private static VariantValue scalar(RoundingMode roundingMode, Object value,
+      RuntimeSqlTypeName typeName) {
+    return VariantSqlValue.create(roundingMode, value,
+        new BasicSqlTypeRtti(typeName));
+  }
+
+  private static VariantValue integer(RoundingMode roundingMode, long l) {
+    if (l >= Integer.MIN_VALUE && l <= Integer.MAX_VALUE) {
+      return scalar(roundingMode, (int) l, RuntimeSqlTypeName.INTEGER);
+    }
+    return scalar(roundingMode, l, RuntimeSqlTypeName.BIGINT);
+  }
+
+  private static VariantValue decimal(RoundingMode roundingMode,
+      BigDecimal d) {
+    // SQL has no negative scale: 1E+2 is DECIMAL(3, 0), not DECIMAL(1, -2).
+    return scalar(roundingMode, d.scale() < 0 ? d.setScale(0) : d,
+        RuntimeSqlTypeName.DECIMAL);
+  }
+
   public static String jsonize(@Nullable Object input) {
     return JSON_PATH_JSON_PROVIDER.toJson(input);
   }
@@ -106,8 +244,19 @@ public class JsonFunctions {
   }
 
   public static JsonValueContext jsonValueExpression(String input) {
+    return jsonValueExpression(JSON_PATH_JSON_PROVIDER, input);
+  }
+
+  /** As {@link #jsonValueExpression(String)}, but reads a number with a
+   * fraction or exponent as a {@link BigDecimal}. */
+  static JsonValueContext jsonValueExpressionExact(String input) {
+    return jsonValueExpression(JSON_PATH_EXACT_JSON_PROVIDER, input);
+  }
+
+  private static JsonValueContext jsonValueExpression(
+      JacksonJsonProvider provider, String input) {
     try {
-      return JsonValueContext.withJavaObj(dejsonize(input));
+      return JsonValueContext.withJavaObj(provider.parse(input));
     } catch (Exception e) {
       return JsonValueContext.withException(e);
     }
@@ -186,7 +335,7 @@ public class JsonFunctions {
     private final LoadingCache<String, JsonValueContext> cache =
         CacheBuilder.newBuilder()
             .maximumSize(FUNCTION_LEVEL_CACHE_MAX_SIZE.value())
-            .build(CacheLoader.from(JsonFunctions::jsonValueExpression));
+            .build(CacheLoader.from(JsonFunctions::jsonValueExpressionExact));
 
     public JsonPathContext jsonApiCommonSyntaxWithCache(String input,
         String pathSpec) {
@@ -243,13 +392,17 @@ public class JsonFunctions {
         SqlJsonValueEmptyOrErrorBehavior emptyBehavior,
         Object defaultValueOnEmpty,
         SqlJsonValueEmptyOrErrorBehavior errorBehavior,
-        Object defaultValueOnError) {
+        Object defaultValueOnError,
+        CastSpec target,
+        RoundingMode roundingMode) {
       return jsonValue(
           jsonApiCommonSyntaxWithCache(input, pathSpec),
           emptyBehavior,
           defaultValueOnEmpty,
           errorBehavior,
-          defaultValueOnError);
+          defaultValueOnError,
+          target,
+          roundingMode);
     }
 
     public @Nullable Object jsonValue(JsonValueContext input,
@@ -257,20 +410,26 @@ public class JsonFunctions {
         SqlJsonValueEmptyOrErrorBehavior emptyBehavior,
         Object defaultValueOnEmpty,
         SqlJsonValueEmptyOrErrorBehavior errorBehavior,
-        Object defaultValueOnError) {
+        Object defaultValueOnError,
+        CastSpec target,
+        RoundingMode roundingMode) {
       return jsonValue(
           jsonApiCommonSyntax(input, pathSpec),
           emptyBehavior,
           defaultValueOnEmpty,
           errorBehavior,
-          defaultValueOnError);
+          defaultValueOnError,
+          target,
+          roundingMode);
     }
 
     public @Nullable Object jsonValue(JsonPathContext context,
         SqlJsonValueEmptyOrErrorBehavior emptyBehavior,
         Object defaultValueOnEmpty,
         SqlJsonValueEmptyOrErrorBehavior errorBehavior,
-        Object defaultValueOnError) {
+        Object defaultValueOnError,
+        CastSpec target,
+        RoundingMode roundingMode) {
       final Exception exc;
       if (context.hasException()) {
         exc = context.exc;
@@ -284,7 +443,7 @@ public class JsonFunctions {
           case NULL:
             return null;
           case DEFAULT:
-            return defaultValueOnEmpty;
+            return convertDefaultValue(defaultValueOnEmpty, target, roundingMode);
           default:
             throw RESOURCE.illegalEmptyBehaviorInJsonValueFunc(
                 emptyBehavior.toString()).ex();
@@ -295,7 +454,13 @@ public class JsonFunctions {
               RESOURCE.scalarValueRequiredInStrictModeOfJsonValueFunc(
                   value.toString()).ex();
         } else {
-          return value;
+          try {
+            return toVariant(jsonValueScalar(value, target), roundingMode)
+                .dynamicCast(target, roundingMode);
+          } catch (Exception e) {
+            // A failed conversion is an error, so ON ERROR applies.
+            exc = e;
+          }
         }
       }
       switch (errorBehavior) {
@@ -304,7 +469,7 @@ public class JsonFunctions {
       case NULL:
         return null;
       case DEFAULT:
-        return defaultValueOnError;
+        return convertDefaultValue(defaultValueOnError, target, roundingMode);
       default:
         throw RESOURCE.illegalErrorBehaviorInJsonValueFunc(
             errorBehavior.toString()).ex();
@@ -317,10 +482,13 @@ public class JsonFunctions {
         SqlJsonQueryWrapperBehavior wrapperBehavior,
         SqlJsonQueryEmptyOrErrorBehavior emptyBehavior,
         SqlJsonQueryEmptyOrErrorBehavior errorBehavior,
-        boolean jsonize) {
+        boolean jsonize,
+        CastSpec target,
+        RoundingMode roundingMode) {
       return jsonQuery(
           jsonApiCommonSyntaxWithCache(input, pathSpec),
-          wrapperBehavior, emptyBehavior, errorBehavior, jsonize);
+          wrapperBehavior, emptyBehavior, errorBehavior, jsonize, target,
+          roundingMode);
     }
 
     public @Nullable Object jsonQuery(JsonValueContext input,
@@ -328,10 +496,13 @@ public class JsonFunctions {
         SqlJsonQueryWrapperBehavior wrapperBehavior,
         SqlJsonQueryEmptyOrErrorBehavior emptyBehavior,
         SqlJsonQueryEmptyOrErrorBehavior errorBehavior,
-        boolean jsonize) {
+        boolean jsonize,
+        CastSpec target,
+        RoundingMode roundingMode) {
       return jsonQuery(
           jsonApiCommonSyntax(input, pathSpec),
-          wrapperBehavior, emptyBehavior, errorBehavior, jsonize);
+          wrapperBehavior, emptyBehavior, errorBehavior, jsonize, target,
+          roundingMode);
     }
 
     public @Nullable Object jsonQuery(
@@ -339,7 +510,9 @@ public class JsonFunctions {
         SqlJsonQueryWrapperBehavior wrapperBehavior,
         SqlJsonQueryEmptyOrErrorBehavior emptyBehavior,
         SqlJsonQueryEmptyOrErrorBehavior errorBehavior,
-        boolean jsonize) {
+        boolean jsonize,
+        CastSpec target,
+        RoundingMode roundingMode) {
       final Exception exc;
       if (context.hasException()) {
         exc = context.exc;
@@ -394,7 +567,15 @@ public class JsonFunctions {
               exc = e;
             }
           } else {
-            return value;
+            try {
+              // The RETURNING type, such as an ARRAY, MAP, ROW or VARIANT,
+              // drives the conversion at every level of the value.
+              return toVariant(value, roundingMode).dynamicCast(target,
+                  roundingMode);
+            } catch (Exception e) {
+              // A failed conversion is an error, so ON ERROR applies.
+              exc = e;
+            }
           }
         }
       }
@@ -411,6 +592,39 @@ public class JsonFunctions {
         throw RESOURCE.illegalErrorBehaviorInJsonQueryFunc(
             errorBehavior.toString()).ex();
       }
+    }
+
+    /** Returns the scalar that {@code JSON_VALUE} converts to its
+     * {@code RETURNING} type. To a character type, a JSON number or boolean
+     * converts as its JSON text ({@code 1.50}, {@code true}), not as
+     * {@code CAST} spells it ({@code TRUE}), so that the result is still
+     * JSON; the default {@code RETURNING} type is {@code VARCHAR(2000)}, and
+     * the result is often passed to another JSON function. */
+    private static Object jsonValueScalar(Object value, CastSpec target) {
+      switch (target.getTypeName()) {
+      case CHAR:
+      case VARCHAR:
+        if (value instanceof Boolean || value instanceof Number) {
+          return jsonize(value);
+        }
+        return value;
+      default:
+        return value;
+      }
+    }
+
+    /** Converts the value of a {@code DEFAULT} clause to the type of the
+     * {@code RETURNING} clause.
+     *
+     * <p>The value is a SQL value of the type it was written as, not a
+     * value read from a JSON document, so the only conversion it can need is
+     * between numeric types, as in
+     * {@code RETURNING DOUBLE DEFAULT 1 ON EMPTY}. */
+    private static @Nullable Object convertDefaultValue(@Nullable Object value,
+        CastSpec target, RoundingMode roundingMode) {
+      return SqlTypeName.NUMERIC_TYPES.contains(target.getTypeName())
+          ? SqlFunctions.cast(value, target, roundingMode)
+          : value;
     }
 
     private static Object jsonQueryEmptyArray(boolean jsonize) {

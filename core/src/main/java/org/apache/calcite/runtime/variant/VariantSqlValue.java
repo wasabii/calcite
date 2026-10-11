@@ -21,6 +21,8 @@ import org.apache.calcite.runtime.rtti.RuntimeTypeInformation;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.math.RoundingMode;
+import java.util.List;
+import java.util.Map;
 
 /** A value of VARIANT type that represents a SQL value
  * (The VARIANT type also has a null value which is different
@@ -54,5 +56,31 @@ public abstract class VariantSqlValue extends VariantValue {
       return new VariantSqlNull(type.getTypeName());
     }
     return new VariantNonNull(roundingMode, object, type);
+  }
+
+  /**
+   * Creates a VARIANT value of type {@code ARRAY} whose elements are already
+   * VARIANT values.
+   *
+   * <p>Unlike {@link #create}, which wraps each element of an
+   * {@code ARRAY<VARIANT>} in a further VARIANT, this keeps the elements as
+   * they are, so a VARIANT built from a tree of values (such as a JSON
+   * document) is wrapped only once at each level. An element may be
+   * {@link VariantNull}.
+   */
+  public static VariantValue createArray(RoundingMode roundingMode,
+      List<VariantValue> elements) {
+    return new VariantNonNull(roundingMode,
+        RuntimeTypeInformation.RuntimeSqlTypeName.ARRAY, elements);
+  }
+
+  /**
+   * Creates a VARIANT value of type {@code MAP} whose keys and values are
+   * already VARIANT values; see {@link #createArray}.
+   */
+  public static VariantValue createMap(RoundingMode roundingMode,
+      Map<VariantValue, VariantValue> entries) {
+    return new VariantNonNull(roundingMode,
+        RuntimeTypeInformation.RuntimeSqlTypeName.MAP, entries);
   }
 }
