@@ -30,6 +30,8 @@ import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.apache.calcite.linq4j.Nullness.castNonNull;
+
 /**
  * Utility methods to manipulate String representation of DateTime values.
  *
@@ -135,7 +137,7 @@ public class DateTimeStringUtils {
     if (!m.matches()) {
       return null;
     }
-    return new String[] {m.group(1), m.group(2)};
+    return new String[] {castNonNull(m.group(1)), castNonNull(m.group(2))};
   }
 
   /** Parses a time zone, which may be an offset ({@code +05:30},

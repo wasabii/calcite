@@ -31,13 +31,13 @@ import org.apache.calcite.runtime.ObjectEnumeratorCursor;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.TimeZone;
+
+import static org.apache.calcite.linq4j.Nullness.castNonNull;
 
 import static java.util.Objects.requireNonNull;
 
@@ -82,17 +82,20 @@ public class CalciteResultSet extends AvaticaResultSet {
     return this;
   }
 
-  @Override public @Nullable Object getObject(int columnIndex)
+  @Override public Object getObject(int columnIndex)
       throws SQLException {
     if (isZoned(columnIndex)) {
       // Avatica's getObject does not support TIMESTAMP WITH TIME ZONE and
-      // TIME WITH TIME ZONE columns; ask the accessor directly
-      return requireNonNull(accessorList, "accessorList").get(columnIndex - 1).getObject();
+      // TIME WITH TIME ZONE columns; ask the accessor directly. As in
+      // Avatica, the result is null if the value is SQL NULL.
+      return castNonNull(
+          requireNonNull(accessorList, "accessorList")
+              .get(columnIndex - 1).getObject());
     }
     return super.getObject(columnIndex);
   }
 
-  @Override public @Nullable Object getObject(String columnLabel)
+  @Override public Object getObject(String columnLabel)
       throws SQLException {
     if (accessorList != null) {
       final int columnIndex = findColumn(columnLabel);
