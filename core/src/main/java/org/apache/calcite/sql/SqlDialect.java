@@ -887,6 +887,18 @@ public class SqlDialect {
     return true;
   }
 
+  /** Returns whether this dialect's TIMESTAMP WITH TIME ZONE and TIME WITH
+   * TIME ZONE values can have a time zone region (such as
+   * {@code America/New_York}), as well as an offset (such as
+   * {@code +05:30}).
+   *
+   * <p>If false, the JDBC adapter does not push down an expression that
+   * contains a literal with a region, and fails if a parameter value has a
+   * region. */
+  public boolean supportsTimeZoneRegions() {
+    return true;
+  }
+
  /** Returns SqlNode for type in "cast(column as type)", which might be
   * different between databases by type name, precision etc.
   *

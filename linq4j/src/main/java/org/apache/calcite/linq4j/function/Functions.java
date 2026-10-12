@@ -24,6 +24,8 @@ import java.io.Serializable;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.time.OffsetTime;
+import java.time.ZonedDateTime;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -496,7 +498,10 @@ public abstract class Functions {
    * {@code Object[]} arrays and {@link List}s are compared element-wise and
    * recursively, and compare equal to each other when their elements are
    * equal, regardless of container kind; primitive arrays are compared by
-   * content; {@code null} equals {@code null}.
+   * content; {@link ZonedDateTime} and {@link OffsetTime} values (the
+   * runtime representations of TIMESTAMP WITH TIME ZONE and TIME WITH TIME
+   * ZONE) are equal if they denote the same instant, regardless of zone;
+   * {@code null} equals {@code null}.
    *
    * <p>This implements the SQL "not distinct" semantics used by
    * {@code GROUP BY}, {@code DISTINCT} and set operations. */
@@ -563,6 +568,13 @@ public abstract class Functions {
       // Primitive arrays (e.g. byte[] for BINARY values).
       return Arrays.deepEquals(new Object[] {v1}, new Object[] {v2});
     }
+    if (v1 instanceof ZonedDateTime && v2 instanceof ZonedDateTime) {
+      // Same instant, regardless of zone
+      return ((ZonedDateTime) v1).isEqual((ZonedDateTime) v2);
+    }
+    if (v1 instanceof OffsetTime && v2 instanceof OffsetTime) {
+      return ((OffsetTime) v1).isEqual((OffsetTime) v2);
+    }
     return v1.equals(v2);
   }
 
@@ -623,6 +635,16 @@ public abstract class Functions {
     }
     if (o.getClass().isArray()) {
       return Arrays.deepHashCode(new Object[] {o});
+    }
+    if (o instanceof ZonedDateTime) {
+      return ((ZonedDateTime) o).toInstant().hashCode();
+    }
+    if (o instanceof OffsetTime) {
+      // Consistent with OffsetTime.isEqual, which compares the time of day
+      // minus the offset
+      final OffsetTime t = (OffsetTime) o;
+      return Long.hashCode(t.toLocalTime().toNanoOfDay()
+          - t.getOffset().getTotalSeconds() * 1_000_000_000L);
     }
     return o.hashCode();
   }

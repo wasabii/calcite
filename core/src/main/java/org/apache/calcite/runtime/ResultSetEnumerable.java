@@ -50,6 +50,8 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import javax.sql.DataSource;
@@ -188,11 +190,25 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
    * {@code ResultSetEnumerable} over a prepared statement. */
   public static PreparedStatementEnricher createEnricher(Integer[] indexes,
       DataContext context) {
+    return createEnricher(indexes, context, true);
+  }
+
+  /** Called from generated code that proposes to create a
+   * {@code ResultSetEnumerable} over a prepared statement.
+   *
+   * @param indexes Indexes of the dynamic parameters
+   * @param context Data context, which holds parameter values
+   * @param supportsTimeZoneRegions Whether the database's TIMESTAMP WITH TIME
+   *   ZONE values can have a time zone region, as opposed to only an offset;
+   *   see {@link org.apache.calcite.sql.SqlDialect#supportsTimeZoneRegions()}
+   */
+  public static PreparedStatementEnricher createEnricher(Integer[] indexes,
+      DataContext context, boolean supportsTimeZoneRegions) {
     return preparedStatement -> {
       for (int i = 0; i < indexes.length; i++) {
         final int index = indexes[i];
         setDynamicParam(preparedStatement, i + 1,
-            context.get("?" + index));
+            context.get("?" + index), supportsTimeZoneRegions);
       }
     };
   }
@@ -200,9 +216,26 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
   /** Assigns a value to a dynamic parameter in a prepared statement, calling
    * the appropriate {@code setXxx} method based on the type of the value. */
   private static void setDynamicParam(PreparedStatement preparedStatement,
-      int i, @Nullable Object value) throws SQLException {
+      int i, @Nullable Object value, boolean supportsTimeZoneRegions)
+      throws SQLException {
     if (value == null) {
       preparedStatement.setNull(i, Types.NULL);
+    } else if (value instanceof ZonedDateTime) {
+      // TIMESTAMP WITH TIME ZONE. JDBC's standard type is OffsetDateTime;
+      // only some drivers (such as Oracle's) accept ZonedDateTime, whose zone
+      // may be a region.
+      final ZonedDateTime zonedDateTime = (ZonedDateTime) value;
+      if (zonedDateTime.getZone() instanceof ZoneOffset) {
+        preparedStatement.setObject(i, zonedDateTime.toOffsetDateTime());
+      } else if (supportsTimeZoneRegions) {
+        preparedStatement.setObject(i, zonedDateTime);
+      } else {
+        throw new SQLException("Cannot bind TIMESTAMP WITH TIME ZONE value '"
+            + SqlFunctions.timestampTzToString(zonedDateTime)
+            + "' to parameter " + i + ": its time zone '"
+            + zonedDateTime.getZone().getId() + "' is a region, and the "
+            + "database supports only offsets such as '+05:30'");
+      }
     } else if (value instanceof Timestamp) {
       preparedStatement.setTimestamp(i, (Timestamp) value);
     } else if (value instanceof Time) {

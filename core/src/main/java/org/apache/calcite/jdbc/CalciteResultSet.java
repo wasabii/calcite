@@ -22,6 +22,7 @@ import org.apache.calcite.avatica.AvaticaStatement;
 import org.apache.calcite.avatica.ColumnMetaData;
 import org.apache.calcite.avatica.Handler;
 import org.apache.calcite.avatica.Meta;
+import org.apache.calcite.avatica.MetaImpl;
 import org.apache.calcite.avatica.util.Cursor;
 import org.apache.calcite.linq4j.Enumerator;
 import org.apache.calcite.linq4j.Linq4j;
@@ -30,11 +31,15 @@ import org.apache.calcite.runtime.ObjectEnumeratorCursor;
 
 import com.google.common.collect.ImmutableList;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
+
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.TimeZone;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * Implementation of {@link ResultSet}
@@ -61,8 +66,48 @@ public class CalciteResultSet extends AvaticaResultSet {
     }
     connection.getDriver().handler.onStatementExecute(statement, resultSink);
 
-    super.execute();
+    if (!ZonedValueCursor.anyZoned(columnMetaDataList)) {
+      super.execute();
+      return this;
+    }
+    // Avatica cannot access TIMESTAMP WITH TIME ZONE and TIME WITH TIME ZONE
+    // values (ZonedDateTime, OffsetTime); wrap the cursor so that it can.
+    final Iterable<Object> iterable =
+        connection.meta().createIterable(statement.handle, state, signature,
+            ImmutableList.of(), firstFrame);
+    final Cursor cursor =
+        new ZonedValueCursor(
+            MetaImpl.createCursor(signature.cursorFactory, iterable));
+    execute2(cursor, columnMetaDataList);
     return this;
+  }
+
+  @Override public @Nullable Object getObject(int columnIndex)
+      throws SQLException {
+    if (isZoned(columnIndex)) {
+      // Avatica's getObject does not support TIMESTAMP WITH TIME ZONE and
+      // TIME WITH TIME ZONE columns; ask the accessor directly
+      return requireNonNull(accessorList, "accessorList").get(columnIndex - 1).getObject();
+    }
+    return super.getObject(columnIndex);
+  }
+
+  @Override public @Nullable Object getObject(String columnLabel)
+      throws SQLException {
+    if (accessorList != null) {
+      final int columnIndex = findColumn(columnLabel);
+      if (isZoned(columnIndex)) {
+        return getObject(columnIndex);
+      }
+    }
+    return super.getObject(columnLabel);
+  }
+
+  private boolean isZoned(int columnIndex) {
+    return accessorList != null
+        && columnIndex >= 1
+        && columnIndex <= columnMetaDataList.size()
+        && ZonedValueCursor.isZoned(columnMetaDataList.get(columnIndex - 1));
   }
 
   @Override public ResultSet create(ColumnMetaData.AvaticaType elementType,

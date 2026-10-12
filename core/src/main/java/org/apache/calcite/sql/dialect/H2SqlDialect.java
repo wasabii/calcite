@@ -38,6 +38,10 @@ public class H2SqlDialect extends SqlDialect {
     return false;
   }
 
+  @Override public boolean supportsTimeZoneRegions() {
+    return false;
+  }
+
   @Override public boolean supportsWindowFunctions() {
     return false;
   }

@@ -69,7 +69,9 @@ import org.apache.calcite.sql.dialect.BigQuerySqlDialect;
 import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 import org.apache.calcite.sql.dialect.ClickHouseSqlDialect;
 import org.apache.calcite.sql.dialect.DuckDBSqlDialect;
+import org.apache.calcite.sql.dialect.H2SqlDialect;
 import org.apache.calcite.sql.dialect.HiveSqlDialect;
+import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 import org.apache.calcite.sql.dialect.JethroDataSqlDialect;
 import org.apache.calcite.sql.dialect.MssqlSqlDialect;
 import org.apache.calcite.sql.dialect.MysqlSqlDialect;
@@ -1972,6 +1974,93 @@ class RelToSqlConverterTest {
     final String expectedMssql = "SELECT CAST([hire_date] AS DATETIME2(3))\n"
         + "FROM [foodmart].[employee]";
     sql(query).withMssql().ok(expectedMssql);
+  }
+
+  /** Tests unparsing a TIMESTAMP WITH TIME ZONE literal and a CAST to
+   * TIMESTAMP WITH TIME ZONE. */
+  @Test void testTimestampTz() {
+    final String query = "select \"employee_id\" from \"employee\"\n"
+        + "where cast(\"hire_date\" as timestamp(3) with time zone)\n"
+        + "  > timestamp with time zone '1997-01-01 10:00:00.250 +05:30'";
+    final String expected = "SELECT \"employee_id\"\n"
+        + "FROM \"foodmart\".\"employee\"\n"
+        + "WHERE CAST(\"hire_date\" AS TIMESTAMP(3) WITH TIME ZONE)"
+        + " > TIMESTAMP WITH TIME ZONE '1997-01-01 10:00:00.250 +05:30'";
+    final String expectedPostgresql = expected;
+    final String expectedMssql = "SELECT [employee_id]\n"
+        + "FROM [foodmart].[employee]\n"
+        + "WHERE CAST([hire_date] AS DATETIMEOFFSET(3))"
+        + " > CAST('1997-01-01 10:00:00.250 +05:30' AS DATETIMEOFFSET(3))";
+    final String expectedOracle = "SELECT \"employee_id\"\n"
+        + "FROM \"foodmart\".\"employee\"\n"
+        + "WHERE CAST(\"hire_date\" AS TIMESTAMP(3) WITH TIME ZONE)"
+        + " > TIMESTAMP '1997-01-01 10:00:00.250 +05:30'";
+    final String expectedH2 = expected;
+    sql(query)
+        .ok(expected)
+        .withPostgresql().ok(expectedPostgresql)
+        .withMssql().ok(expectedMssql)
+        .withOracle().ok(expectedOracle)
+        .withH2().ok(expectedH2);
+  }
+
+  /** Tests unparsing a TIMESTAMP WITH TIME ZONE literal whose zone is a
+   * region. */
+  @Test void testTimestampTzRegion() {
+    final String query = "select \"employee_id\" from \"employee\"\n"
+        + "where cast(\"hire_date\" as timestamp with time zone)\n"
+        + "  > timestamp with time zone '1997-01-01 10:00:00 America/New_York'";
+    final String expected = "SELECT \"employee_id\"\n"
+        + "FROM \"foodmart\".\"employee\"\n"
+        + "WHERE CAST(\"hire_date\" AS TIMESTAMP(0) WITH TIME ZONE)"
+        + " > TIMESTAMP WITH TIME ZONE '1997-01-01 10:00:00 America/New_York'";
+    final String expectedOracle = "SELECT \"employee_id\"\n"
+        + "FROM \"foodmart\".\"employee\"\n"
+        + "WHERE CAST(\"hire_date\" AS TIMESTAMP(0) WITH TIME ZONE)"
+        + " > TIMESTAMP '1997-01-01 10:00:00 America/New_York'";
+    sql(query)
+        .ok(expected)
+        .withOracle().ok(expectedOracle);
+  }
+
+  /** Tests unparsing a TIME WITH TIME ZONE literal. */
+  @Test void testTimeTz() {
+    final String query = "select \"employee_id\" from \"employee\"\n"
+        + "where time with time zone '10:00:00 +05:30'\n"
+        + "  = cast(\"hire_date\" as time with time zone)";
+    final String expected = "SELECT \"employee_id\"\n"
+        + "FROM \"foodmart\".\"employee\"\n"
+        + "WHERE TIME WITH TIME ZONE '10:00:00 +05:30'"
+        + " = CAST(\"hire_date\" AS TIME(0) WITH TIME ZONE)";
+    final String expectedPostgresql = expected;
+    sql(query)
+        .ok(expected)
+        .withPostgresql().ok(expectedPostgresql);
+  }
+
+  /** Tests that dialects whose TIMESTAMP WITH TIME ZONE values have only
+   * offsets refuse time zone regions, and that dialects without a TIME WITH
+   * TIME ZONE type do not support it. */
+  @Test void testTimeZoneSupport() {
+    assertThat(CalciteSqlDialect.DEFAULT.supportsTimeZoneRegions(), is(true));
+    assertThat(OracleSqlDialect.DEFAULT.supportsTimeZoneRegions(), is(true));
+    assertThat(PostgresqlSqlDialect.DEFAULT.supportsTimeZoneRegions(),
+        is(false));
+    assertThat(MssqlSqlDialect.DEFAULT.supportsTimeZoneRegions(), is(false));
+    assertThat(H2SqlDialect.DEFAULT.supportsTimeZoneRegions(), is(false));
+    assertThat(HsqldbSqlDialect.DEFAULT.supportsTimeZoneRegions(), is(false));
+
+    final SqlTypeFactoryImpl typeFactory =
+        new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
+    final RelDataType timeTz = typeFactory.createSqlType(SqlTypeName.TIME_TZ);
+    final RelDataType timestampTz =
+        typeFactory.createSqlType(SqlTypeName.TIMESTAMP_TZ);
+    assertThat(MssqlSqlDialect.DEFAULT.supportsDataType(timeTz), is(false));
+    assertThat(MssqlSqlDialect.DEFAULT.supportsDataType(timestampTz),
+        is(true));
+    assertThat(OracleSqlDialect.DEFAULT.supportsDataType(timeTz), is(false));
+    assertThat(PostgresqlSqlDialect.DEFAULT.supportsDataType(timeTz),
+        is(true));
   }
 
   /** Test case for
@@ -12753,6 +12842,10 @@ class RelToSqlConverterTest {
 
     Sql withHive() {
       return dialect(DatabaseProduct.HIVE.getDialect());
+    }
+
+    Sql withH2() {
+      return dialect(H2SqlDialect.DEFAULT);
     }
 
     Sql withHsqldb() {

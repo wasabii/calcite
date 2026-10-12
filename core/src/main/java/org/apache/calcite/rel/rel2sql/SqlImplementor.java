@@ -113,7 +113,9 @@ import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.RangeSets;
 import org.apache.calcite.util.Sarg;
 import org.apache.calcite.util.TimeString;
+import org.apache.calcite.util.TimeWithTimeZoneString;
 import org.apache.calcite.util.TimestampString;
+import org.apache.calcite.util.TimestampWithTimeZoneString;
 import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
@@ -1790,9 +1792,19 @@ public abstract class SqlImplementor {
       return SqlLiteral.createDate(castNonNull(literal.getValueAs(DateString.class)),
           POS);
     case TIME:
+      if (typeName == SqlTypeName.TIME_TZ) {
+        return SqlLiteral.createTime(
+            castNonNull(literal.getValueAs(TimeWithTimeZoneString.class)),
+            literal.getType().getPrecision(), POS);
+      }
       return SqlLiteral.createTime(castNonNull(literal.getValueAs(TimeString.class)),
           literal.getType().getPrecision(), POS);
     case TIMESTAMP:
+      if (typeName == SqlTypeName.TIMESTAMP_TZ) {
+        return SqlLiteral.createTimestamp(
+            castNonNull(literal.getValueAs(TimestampWithTimeZoneString.class)),
+            literal.getType().getPrecision(), POS);
+      }
       return SqlLiteral.createTimestamp(typeName,
           castNonNull(literal.getValueAs(TimestampString.class)),
           literal.getType().getPrecision(), POS);

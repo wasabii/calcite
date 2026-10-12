@@ -101,6 +101,11 @@ public class PostgresqlSqlDialect extends SqlDialect {
     return false;
   }
 
+  @Override public boolean supportsTimeZoneRegions() {
+    // TIMESTAMPTZ stores an instant; TIMETZ stores an offset
+    return false;
+  }
+
   @Override public @Nullable SqlNode getCastSpec(RelDataType type) {
     String castSpec;
     switch (type.getSqlTypeName()) {

@@ -193,6 +193,16 @@ public class CoreQuidemTest extends QuidemTest {
                   SqlConformanceEnum.PRESTO))
               .connect();
         default:
+          if (name.startsWith("scott-tz-")) {
+            // Same as "scott", but with a given session time zone; for
+            // example, "scott-tz-America/New_York".
+            return customize(CalciteAssert.that()
+                .with(CalciteConnectionProperty.FUN, SqlLibrary.CALCITE.fun)
+                .with(CalciteConnectionProperty.TIME_ZONE,
+                    name.substring("scott-tz-".length()))
+                .with(CalciteAssert.Config.SCOTT))
+                .connect();
+          }
           return super.connect(name, reference);
         }
       }

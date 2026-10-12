@@ -19,6 +19,7 @@ import org.apache.calcite.avatica.util.ByteString;
 import org.apache.calcite.avatica.util.DateTimeUtils;
 import org.apache.calcite.linq4j.Enumerable;
 import org.apache.calcite.linq4j.function.Function1;
+import org.apache.calcite.linq4j.function.Functions;
 import org.apache.calcite.runtime.CalciteException;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.SqlFunctions;
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -1986,6 +1988,81 @@ class SqlFunctionsTest {
    * Test date after 0001-01-01 required by ANSI SQL - is passed.
    * Test date before 0001-01-01 and malformed date time literal - is failed.
    */
+  /** Tests the runtime functions for TIMESTAMP WITH TIME ZONE values,
+   * which are {@link ZonedDateTime}. */
+  @Test void testTimestampTz() {
+    final ZonedDateTime a =
+        SqlFunctions.toTimestampTz("2020-01-01 10:00:00 +01:00");
+    final ZonedDateTime b =
+        SqlFunctions.toTimestampTz("2020-01-01 12:00:00+03:00");
+    final ZonedDateTime c =
+        SqlFunctions.toTimestampTz("2020-01-01 10:00:00 America/New_York");
+
+    // The zone is kept
+    assertThat(SqlFunctions.timestampTzToString(a),
+        is("2020-01-01 10:00:00 +01:00"));
+    assertThat(SqlFunctions.timestampTzToString(c),
+        is("2020-01-01 10:00:00 America/New_York"));
+    assertThat(
+        SqlFunctions.timestampTzToString(
+            SqlFunctions.toTimestampTz("2020-01-01 10:00:00Z")),
+        is("2020-01-01 10:00:00 +00:00"));
+
+    // Values that denote the same instant are equal, but not identical
+    assertThat(a.equals(b), is(false));
+    assertThat(SqlFunctions.eq(a, b), is(true));
+    assertThat(SqlFunctions.lt(a, c), is(true));
+    assertThat(Functions.deepEquals(a, b), is(true));
+    assertThat(Functions.deepHashCode(a), is(Functions.deepHashCode(b)));
+
+    // Adding a day in a region keeps the local time across a daylight
+    // saving change; adding 24 hours keeps the elapsed time
+    final ZonedDateTime d =
+        SqlFunctions.toTimestampTz("2026-03-07 12:00:00 America/New_York");
+    assertThat(
+        SqlFunctions.timestampTzToString(
+            SqlFunctions.timestampTzPlus(d, DateTimeUtils.MILLIS_PER_DAY,
+                true)),
+        is("2026-03-08 12:00:00 America/New_York"));
+    assertThat(
+        SqlFunctions.timestampTzToString(
+            SqlFunctions.timestampTzPlus(d, DateTimeUtils.MILLIS_PER_DAY,
+                false)),
+        is("2026-03-08 13:00:00 America/New_York"));
+    assertThat(
+        SqlFunctions.timestampTzToString(
+            SqlFunctions.timestampTzPlusMonths(
+                SqlFunctions.toTimestampTz("2020-01-31 10:00:00 +05:30"), 1)),
+        is("2020-02-29 10:00:00 +05:30"));
+
+    // CAST to TIMESTAMP uses the session time zone
+    final TimeZone newYork = TimeZone.getTimeZone("America/New_York");
+    assertThat(SqlFunctions.timestampTzToTimestamp(a, newYork),
+        is(SqlFunctions.toTimestampTz("2020-01-01 04:00:00 +00:00")
+            .toInstant().toEpochMilli()));
+    assertThat(
+        SqlFunctions.timestampTzToString(
+            SqlFunctions.timestampToTimestampTz(0L, newYork)),
+        is("1970-01-01 00:00:00 -05:00"));
+
+    // AT TIME ZONE keeps the instant
+    assertThat(
+        SqlFunctions.timestampTzToString(
+            SqlFunctions.atTimeZone(a, "Asia/Kolkata")),
+        is("2020-01-01 14:30:00 Asia/Kolkata"));
+
+    // Offsets must be between -14:00 and +14:00
+    try {
+      final ZonedDateTime e =
+          SqlFunctions.toTimestampTz("2020-01-01 10:00:00 +15:00");
+      fail("expected error, got " + e);
+    } catch (IllegalArgumentException e) {
+      assertThat(e.getMessage(),
+          is("Time zone offset +15:00 is out of range; "
+              + "it must be between -14:00 and +14:00"));
+    }
+  }
+
   @Test void testToTimestampWithLocalTimeZone() {
     Long ret = toTimestampWithLocalTimeZone("1970-01-01 00:00:01", TimeZone.getTimeZone("UTC"));
     assertThat(ret, is(1000L));

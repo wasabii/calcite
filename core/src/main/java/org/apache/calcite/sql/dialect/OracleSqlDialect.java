@@ -31,6 +31,7 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlSyntax;
 import org.apache.calcite.sql.SqlTimeLiteral;
 import org.apache.calcite.sql.SqlTimestampLiteral;
+import org.apache.calcite.sql.SqlTimestampTzLiteral;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.fun.SqlFloorFunction;
@@ -95,6 +96,8 @@ public class OracleSqlDialect extends SqlDialect {
   @Override public boolean supportsDataType(RelDataType type) {
     switch (type.getSqlTypeName()) {
     case BOOLEAN:
+    case TIME_TZ:
+      // Oracle has no TIME types
       return false;
     default:
       return super.supportsDataType(type);
@@ -162,6 +165,10 @@ public class OracleSqlDialect extends SqlDialect {
     } else if (literal instanceof SqlTimeLiteral) {
       writer.literal("TO_TIME('"
           + literal.toFormattedString() + "', 'HH24:MI:SS.FF')");
+    } else if (literal instanceof SqlTimestampTzLiteral) {
+      // A TIMESTAMP literal with a zone (offset or region) has type
+      // TIMESTAMP WITH TIME ZONE
+      writer.literal("TIMESTAMP '" + literal.toFormattedString() + "'");
     } else {
       super.unparseDateTimeLiteral(writer, literal, leftPrec, rightPrec);
     }

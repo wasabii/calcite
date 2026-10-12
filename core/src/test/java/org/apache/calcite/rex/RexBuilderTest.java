@@ -454,7 +454,7 @@ class RexBuilderTest {
 
     // Now with milliseconds
     final TimestampWithTimeZoneString ts2 = ts.withMillis(56);
-    assertThat(ts2, hasToString("1969-07-21 02:56:15.056 PST"));
+    assertThat(ts2, hasToString("1969-07-21 02:56:15.056 America/Los_Angeles"));
     final RexLiteral literal2 =
         builder.makeLiteral(ts2.getLocalTimestampString(), timestampType3);
     assertThat(literal2.getValue(), hasToString("1969-07-21 02:56:15.056"));
@@ -479,19 +479,19 @@ class RexBuilderTest {
         hasToString("1969-07-21 02:56:15.102"));
 
     // toString
-    assertThat(ts2.round(1), hasToString("1969-07-21 02:56:15 PST"));
-    assertThat(ts2.round(2), hasToString("1969-07-21 02:56:15.05 PST"));
-    assertThat(ts2.round(3), hasToString("1969-07-21 02:56:15.056 PST"));
-    assertThat(ts2.round(4), hasToString("1969-07-21 02:56:15.056 PST"));
+    assertThat(ts2.round(1), hasToString("1969-07-21 02:56:15 America/Los_Angeles"));
+    assertThat(ts2.round(2), hasToString("1969-07-21 02:56:15.05 America/Los_Angeles"));
+    assertThat(ts2.round(3), hasToString("1969-07-21 02:56:15.056 America/Los_Angeles"));
+    assertThat(ts2.round(4), hasToString("1969-07-21 02:56:15.056 America/Los_Angeles"));
 
-    assertThat(ts2.toString(6), is("1969-07-21 02:56:15.056000 PST"));
-    assertThat(ts2.toString(1), is("1969-07-21 02:56:15.0 PST"));
-    assertThat(ts2.toString(0), is("1969-07-21 02:56:15 PST"));
+    assertThat(ts2.toString(6), is("1969-07-21 02:56:15.056000 America/Los_Angeles"));
+    assertThat(ts2.toString(1), is("1969-07-21 02:56:15.0 America/Los_Angeles"));
+    assertThat(ts2.toString(0), is("1969-07-21 02:56:15 America/Los_Angeles"));
 
-    assertThat(ts2.round(0), hasToString("1969-07-21 02:56:15 PST"));
-    assertThat(ts2.round(0).toString(0), is("1969-07-21 02:56:15 PST"));
-    assertThat(ts2.round(0).toString(1), is("1969-07-21 02:56:15.0 PST"));
-    assertThat(ts2.round(0).toString(2), is("1969-07-21 02:56:15.00 PST"));
+    assertThat(ts2.round(0), hasToString("1969-07-21 02:56:15 America/Los_Angeles"));
+    assertThat(ts2.round(0).toString(0), is("1969-07-21 02:56:15 America/Los_Angeles"));
+    assertThat(ts2.round(0).toString(1), is("1969-07-21 02:56:15.0 America/Los_Angeles"));
+    assertThat(ts2.round(0).toString(2), is("1969-07-21 02:56:15.00 America/Los_Angeles"));
   }
 
   private void checkTimestampWithLocalTimeZone(RexLiteral literal) {
@@ -525,49 +525,49 @@ class RexBuilderTest {
 
     // Now with milliseconds
     final TimestampWithTimeZoneString ts2 = ts.withMillis(56);
-    assertThat(ts2, hasToString("1969-07-21 02:56:15.056 PST"));
+    assertThat(ts2, hasToString("1969-07-21 02:56:15.056 America/Los_Angeles"));
     final RexLiteral literal2 =
         builder.makeLiteral(ts2, timestampType3);
-    assertThat(literal2.getValue(), hasToString("1969-07-21 02:56:15.056 PST"));
+    assertThat(literal2.getValue(), hasToString("1969-07-21 02:56:15.056 America/Los_Angeles"));
 
     // Now with nanoseconds
     final TimestampWithTimeZoneString ts3 = ts.withNanos(56);
     final RexLiteral literal3 =
         builder.makeLiteral(ts3, timestampType9);
     assertThat(literal3.getValueAs(TimestampWithTimeZoneString.class),
-        hasToString("1969-07-21 02:56:15 PST"));
+        hasToString("1969-07-21 02:56:15 America/Los_Angeles"));
     final TimestampWithTimeZoneString ts3b = ts.withNanos(2345678);
     final RexLiteral literal3b =
         builder.makeLiteral(ts3b, timestampType9);
     assertThat(literal3b.getValueAs(TimestampWithTimeZoneString.class),
-        hasToString("1969-07-21 02:56:15.002 PST"));
+        hasToString("1969-07-21 02:56:15.002 America/Los_Angeles"));
 
     // Now with a very long fraction
     final TimestampWithTimeZoneString ts4 = ts.withFraction("102030405060708090102");
     final RexLiteral literal4 =
         builder.makeLiteral(ts4, timestampType18);
     assertThat(literal4.getValueAs(TimestampWithTimeZoneString.class),
-        hasToString("1969-07-21 02:56:15.102 PST"));
+        hasToString("1969-07-21 02:56:15.102 America/Los_Angeles"));
 
     // toString
-    assertThat(ts2.round(1), hasToString("1969-07-21 02:56:15 PST"));
-    assertThat(ts2.round(2), hasToString("1969-07-21 02:56:15.05 PST"));
-    assertThat(ts2.round(3), hasToString("1969-07-21 02:56:15.056 PST"));
-    assertThat(ts2.round(4), hasToString("1969-07-21 02:56:15.056 PST"));
+    assertThat(ts2.round(1), hasToString("1969-07-21 02:56:15 America/Los_Angeles"));
+    assertThat(ts2.round(2), hasToString("1969-07-21 02:56:15.05 America/Los_Angeles"));
+    assertThat(ts2.round(3), hasToString("1969-07-21 02:56:15.056 America/Los_Angeles"));
+    assertThat(ts2.round(4), hasToString("1969-07-21 02:56:15.056 America/Los_Angeles"));
 
-    assertThat(ts2.toString(6), is("1969-07-21 02:56:15.056000 PST"));
-    assertThat(ts2.toString(1), is("1969-07-21 02:56:15.0 PST"));
-    assertThat(ts2.toString(0), is("1969-07-21 02:56:15 PST"));
+    assertThat(ts2.toString(6), is("1969-07-21 02:56:15.056000 America/Los_Angeles"));
+    assertThat(ts2.toString(1), is("1969-07-21 02:56:15.0 America/Los_Angeles"));
+    assertThat(ts2.toString(0), is("1969-07-21 02:56:15 America/Los_Angeles"));
 
-    assertThat(ts2.round(0), hasToString("1969-07-21 02:56:15 PST"));
-    assertThat(ts2.round(0).toString(0), is("1969-07-21 02:56:15 PST"));
-    assertThat(ts2.round(0).toString(1), is("1969-07-21 02:56:15.0 PST"));
-    assertThat(ts2.round(0).toString(2), is("1969-07-21 02:56:15.00 PST"));
+    assertThat(ts2.round(0), hasToString("1969-07-21 02:56:15 America/Los_Angeles"));
+    assertThat(ts2.round(0).toString(0), is("1969-07-21 02:56:15 America/Los_Angeles"));
+    assertThat(ts2.round(0).toString(1), is("1969-07-21 02:56:15.0 America/Los_Angeles"));
+    assertThat(ts2.round(0).toString(2), is("1969-07-21 02:56:15.00 America/Los_Angeles"));
   }
 
   private void checkTimestampTz(RexLiteral literal) {
     assertThat(literal,
-        hasToString("1969-07-21 02:56:15 PST:TIMESTAMP_TZ(0)"));
+        hasToString("1969-07-21 02:56:15 America/Los_Angeles:TIMESTAMP_TZ(0)"));
     assertThat(literal.getValue() instanceof TimestampWithTimeZoneString, is(true));
     assertThat(literal.getValue2() instanceof Long, is(true));
     assertThat(literal.getValue3() instanceof Long, is(true));

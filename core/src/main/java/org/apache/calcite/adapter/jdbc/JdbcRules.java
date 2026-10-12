@@ -63,10 +63,13 @@ import org.apache.calcite.schema.ModifiableTable;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.ImmutableBitSet;
+import org.apache.calcite.util.TimeWithTimeZoneString;
+import org.apache.calcite.util.TimestampWithTimeZoneString;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.trace.CalciteTrace;
 
@@ -76,6 +79,8 @@ import com.google.common.collect.ImmutableSet;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -310,6 +315,10 @@ public class JdbcRules {
       if (convertInputTraits && !canJoinOnCondition(join.getCondition())) {
         return null;
       }
+      if (!canImplementZoned(((JdbcConvention) out).dialect,
+          ImmutableList.of(join.getCondition()))) {
+        return null;
+      }
       try {
         return new JdbcJoin(
             join.getCluster(),
@@ -495,7 +504,8 @@ public class JdbcRules {
           .withConversion(Project.class, project ->
                   (out.dialect.supportsWindowFunctions()
                       || !project.containsOver())
-                      && !userDefinedFunctionInProject(project),
+                      && !userDefinedFunctionInProject(project)
+                      && canImplementZoned(out.dialect, project.getProjects()),
               Convention.NONE, out, "JdbcProjectRule")
           .withRuleFactory(JdbcProjectRule::new)
           .toRule(JdbcProjectRule.class);
@@ -585,7 +595,9 @@ public class JdbcRules {
     /** Creates a JdbcFilterRule. */
     public static JdbcFilterRule create(JdbcConvention out) {
       return Config.INSTANCE
-          .withConversion(Filter.class, r -> !userDefinedFunctionInFilter(r),
+          .withConversion(Filter.class, r -> !userDefinedFunctionInFilter(r)
+                  && canImplementZoned(out.dialect,
+                      ImmutableList.of(r.getCondition())),
               Convention.NONE, out, "JdbcFilterRule")
           .withRuleFactory(JdbcFilterRule::new)
           .toRule(JdbcFilterRule.class);
@@ -1067,7 +1079,10 @@ public class JdbcRules {
     /** Creates a JdbcValuesRule. */
     public static JdbcValuesRule create(JdbcConvention out) {
       return Config.INSTANCE
-          .withConversion(Values.class, Convention.NONE, out, "JdbcValuesRule")
+          .withConversion(Values.class,
+              values -> values.getTuples().stream()
+                  .allMatch(tuple -> canImplementZoned(out.dialect, tuple)),
+              Convention.NONE, out, "JdbcValuesRule")
           .withRuleFactory(JdbcValuesRule::new)
           .toRule(JdbcValuesRule.class);
     }
@@ -1099,6 +1114,58 @@ public class JdbcRules {
     @Override public JdbcImplementor.Result implement(JdbcImplementor implementor) {
       return implementor.implement(this);
     }
+  }
+
+  /** Returns whether a dialect can implement the TIMESTAMP WITH TIME ZONE
+   * and TIME WITH TIME ZONE values in some expressions.
+   *
+   * <p>It cannot if it does not support those types (see
+   * {@link SqlDialect#supportsDataType}), or if a literal has a time zone
+   * region (such as {@code America/New_York}) and the dialect supports only
+   * offsets (see {@link SqlDialect#supportsTimeZoneRegions()}). Such
+   * expressions are evaluated by Calcite. */
+  static boolean canImplementZoned(SqlDialect dialect,
+      List<? extends RexNode> nodes) {
+    for (RexNode node : nodes) {
+      if (!canImplementZoned(dialect, node)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static boolean canImplementZoned(SqlDialect dialect, RexNode node) {
+    final RelDataType type = node.getType();
+    switch (type.getSqlTypeName()) {
+    case TIMESTAMP_TZ:
+    case TIME_TZ:
+      if (!dialect.supportsDataType(type)) {
+        return false;
+      }
+      if (node instanceof RexLiteral && !dialect.supportsTimeZoneRegions()) {
+        final RexLiteral literal = (RexLiteral) node;
+        final @Nullable ZoneId zone;
+        if (type.getSqlTypeName() == SqlTypeName.TIMESTAMP_TZ) {
+          final TimestampWithTimeZoneString value =
+              literal.getValueAs(TimestampWithTimeZoneString.class);
+          zone = value == null ? null : value.getZone();
+        } else {
+          final TimeWithTimeZoneString value =
+              literal.getValueAs(TimeWithTimeZoneString.class);
+          zone = value == null ? null : value.getZone();
+        }
+        if (zone != null && !(zone instanceof ZoneOffset)) {
+          return false;
+        }
+      }
+      break;
+    default:
+      break;
+    }
+    if (node instanceof RexCall) {
+      return canImplementZoned(dialect, ((RexCall) node).getOperands());
+    }
+    return true;
   }
 
   /** Visitor that checks whether part of a projection is a user-defined

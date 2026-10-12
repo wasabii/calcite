@@ -368,6 +368,8 @@ import static org.apache.calcite.sql.fun.SqlStdOperatorTable.ASCII;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.ASIN;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.ATAN;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.ATAN2;
+import static org.apache.calcite.sql.fun.SqlStdOperatorTable.AT_LOCAL;
+import static org.apache.calcite.sql.fun.SqlStdOperatorTable.AT_TIME_ZONE;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.BITAND;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.BITAND_OPERATOR;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.BITCOUNT;
@@ -419,6 +421,8 @@ import static org.apache.calcite.sql.fun.SqlStdOperatorTable.EQUALS;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.EVERY;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.EXP;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.EXTRACT;
+import static org.apache.calcite.sql.fun.SqlStdOperatorTable.EXTRACT_TIMEZONE_HOUR;
+import static org.apache.calcite.sql.fun.SqlStdOperatorTable.EXTRACT_TIMEZONE_MINUTE;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.FILTER;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.FIRST_VALUE;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.FLOOR;
@@ -965,6 +969,10 @@ public class RexImpTable implements RexImplementorTable {
       define(DATETIME_PLUS, new DatetimeArithmeticImplementor());
       define(MINUS_DATE, new DatetimeArithmeticImplementor());
       define(EXTRACT, new ExtractImplementor());
+      define(EXTRACT_TIMEZONE_HOUR, new TimeZoneFieldImplementor(true));
+      define(EXTRACT_TIMEZONE_MINUTE, new TimeZoneFieldImplementor(false));
+      define(AT_TIME_ZONE, new AtTimeZoneImplementor());
+      define(AT_LOCAL, new AtTimeZoneImplementor());
       define(DATE_PART, new ExtractImplementor());
       define(FLOOR,
           new FloorImplementor(BuiltInMethod.FLOOR.method,
@@ -2976,8 +2984,10 @@ public class RexImpTable implements RexImplementorTable {
       // Search does not include TZ so this conversion is okay
       case TIMESTAMP:
       case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
-      case TIMESTAMP_TZ:
         expr = Expressions.call(BuiltInMethod.UNIX_TIMESTAMP_TO_STRING.method, expr);
+        break;
+      case TIMESTAMP_TZ:
+        expr = Expressions.call(BuiltInMethod.TIMESTAMP_TZ_TO_STRING.method, expr);
         break;
       default:
         break;
@@ -3157,6 +3167,9 @@ public class RexImpTable implements RexImplementorTable {
         final Expression operand1 = argValueList.get(1);
         final boolean custom = operand1.getType() == String.class;
         Expression operand0 = argValueList.get(0);
+        if (call.getType().getSqlTypeName() == SqlTypeName.TIMESTAMP_TZ) {
+          return implementTimestampTz(translator, operand0, operand1, custom);
+        }
         switch (call.getType().getSqlTypeName()) {
         case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
           operand0 =
@@ -3166,7 +3179,6 @@ public class RexImpTable implements RexImplementorTable {
                       translator.getRoot()));
           // fall through
         case TIMESTAMP:
-        case TIMESTAMP_TZ:
           type = long.class;
           floorMethod = custom ? customTimestampMethod : timestampMethod;
           preFloor = true;
@@ -3211,6 +3223,23 @@ public class RexImpTable implements RexImplementorTable {
       }
     }
 
+    /** Implements FLOOR or CEIL of a TIMESTAMP WITH TIME ZONE value, in the
+     * value's own local time; the zone is kept. */
+    private Expression implementTimestampTz(RexToLixTranslator translator,
+        Expression operand0, Expression operand1, boolean custom) {
+      final boolean ceil =
+          timestampMethod.equals(BuiltInMethod.UNIX_TIMESTAMP_CEIL.method);
+      if (custom) {
+        // Custom time frames work on the instant, as UTC
+        return Expressions.call(customTimestampMethod, translator.getRoot(),
+            operand1, EnumUtils.convert(operand0, long.class));
+      }
+      return Expressions.call(
+          ceil ? BuiltInMethod.CEIL_TIMESTAMP_TZ.method
+              : BuiltInMethod.FLOOR_TIMESTAMP_TZ.method,
+          operand0, translator.getLiteral(operand1));
+    }
+
     private Expression call(Expression operand, Type type,
         TimeUnit timeUnit) {
       if (timeUnit.multiplier.compareTo(BigDecimal.ONE) < 0) {
@@ -3246,8 +3275,11 @@ public class RexImpTable implements RexImplementorTable {
       final Expression operand1 = argValueList.get(1);
       final Expression operand2 = argValueList.get(2);
       switch (call.getType().getSqlTypeName()) {
-      case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
       case TIMESTAMP_TZ:
+        // Custom time frames work on the instant, as UTC
+        return Expressions.call(customTimestampMethod, translator.getRoot(),
+            operand0, operand1, EnumUtils.convert(operand2, long.class));
+      case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
       case TIMESTAMP:
         return Expressions.call(customTimestampMethod, translator.getRoot(),
             operand0, operand1, operand2);
@@ -3273,8 +3305,11 @@ public class RexImpTable implements RexImplementorTable {
 
     @Override Expression implementSafe(final RexToLixTranslator translator,
         final RexCall call, final List<Expression> argValueList) {
-      return Expressions.call(getMethod(call), translator.getRoot(),
-          argValueList.get(0), argValueList.get(1), argValueList.get(2));
+      final Method method = getMethod(call);
+      return Expressions.call(method, translator.getRoot(),
+          argValueList.get(0),
+          EnumUtils.convert(argValueList.get(1), method.getParameterTypes()[2]),
+          EnumUtils.convert(argValueList.get(2), method.getParameterTypes()[3]));
     }
 
     private Method getMethod(RexCall call) {
@@ -3666,8 +3701,22 @@ public class RexImpTable implements RexImplementorTable {
       final TimeUnit unit = requireNonNull(timeUnitRange, "timeUnitRange").startUnit;
       Expression operand = argValueList.get(1);
       boolean isIntervalType = SqlTypeUtil.isInterval(call.operands.get(1).getType());
-      final SqlTypeName sqlTypeName =
+      SqlTypeName sqlTypeName =
           call.operands.get(1).getType().getSqlTypeName();
+      switch (sqlTypeName) {
+      case TIMESTAMP_TZ:
+        // As the SQL standard says, the fields of a TIMESTAMP WITH TIME ZONE
+        // value are its UTC fields; so extract them from the instant.
+        operand = EnumUtils.convert(operand, long.class);
+        sqlTypeName = SqlTypeName.TIMESTAMP;
+        break;
+      case TIME_TZ:
+        operand = EnumUtils.convert(operand, int.class);
+        sqlTypeName = SqlTypeName.TIME;
+        break;
+      default:
+        break;
+      }
       switch (unit) {
       case MILLENNIUM:
       case CENTURY:
@@ -3703,7 +3752,6 @@ public class RexImpTable implements RexImplementorTable {
                   Expressions.call(BuiltInMethod.TIME_ZONE.method,
                       translator.getRoot()));
           // fall through
-        case TIMESTAMP_TZ:
         case TIMESTAMP:
           operand =
               Expressions.call(BuiltInMethod.FLOOR_DIV.method, operand,
@@ -3735,7 +3783,6 @@ public class RexImpTable implements RexImplementorTable {
                   Expressions.constant(TimeUnit.DAY.multiplier.longValue()));
           // fall through
         case TIMESTAMP:
-        case TIMESTAMP_TZ:
           // convert to seconds
           return Expressions.divide(operand,
               Expressions.constant(TimeUnit.SECOND.multiplier.longValue()));
@@ -4264,6 +4311,14 @@ public class RexImpTable implements RexImplementorTable {
           call.getOperands().get(1).getType().getSqlTypeName();
       Expression trop1 = argValueList.get(1);
       final SqlTypeName typeName = call.getType().getSqlTypeName();
+      if (operand0.getType().getSqlTypeName() == SqlTypeName.TIMESTAMP_TZ) {
+        if (typeName1 != SqlTypeName.TIMESTAMP_TZ) {
+          return implementTimestampTz(call, trop0, trop1, typeName1);
+        }
+        // The difference of two values is the difference of their instants
+        trop0 = EnumUtils.convert(trop0, long.class);
+        trop1 = EnumUtils.convert(trop1, long.class);
+      }
       switch (operand0.getType().getSqlTypeName()) {
       case DATE:
         switch (typeName) {
@@ -4368,6 +4423,30 @@ public class RexImpTable implements RexImplementorTable {
       }
     }
 
+    /** Adds an interval to, or subtracts an interval from, a TIMESTAMP WITH
+     * TIME ZONE value. The zone is kept; year-month intervals, and the
+     * days of a day-time interval that starts with DAY, are added in local
+     * time, and the rest is added to the instant. */
+    private static Expression implementTimestampTz(RexCall call,
+        Expression trop0, Expression trop1, SqlTypeName typeName1) {
+      if (call.getKind() == SqlKind.MINUS) {
+        trop1 = Expressions.negate(trop1);
+      }
+      switch (typeName1) {
+      case INTERVAL_YEAR:
+      case INTERVAL_YEAR_MONTH:
+      case INTERVAL_MONTH:
+        return Expressions.call(BuiltInMethod.TIMESTAMP_TZ_PLUS_MONTHS.method,
+            trop0, EnumUtils.convert(trop1, int.class));
+      default:
+        final boolean localDays =
+            typeName1.getStartUnit() == TimeUnit.DAY;
+        return Expressions.call(BuiltInMethod.TIMESTAMP_TZ_PLUS.method,
+            trop0, EnumUtils.convert(trop1, long.class),
+            Expressions.constant(localDays));
+      }
+    }
+
     /** Normalizes a TIME value into 00:00:00..23:59:39. */
     private static Expression normalize(SqlTypeName typeName, Expression e) {
       switch (typeName) {
@@ -4377,6 +4456,79 @@ public class RexImpTable implements RexImplementorTable {
       default:
         return e;
       }
+    }
+  }
+
+  /** Implementor for the {@code AT TIME ZONE} and {@code AT LOCAL}
+   * operators. */
+  private static class AtTimeZoneImplementor
+      extends AbstractRexCallImplementor {
+    AtTimeZoneImplementor() {
+      super("at_time_zone", NullPolicy.STRICT, false);
+    }
+
+    @Override Expression implementSafe(RexToLixTranslator translator,
+        RexCall call, List<Expression> argValueList) {
+      final Expression timeZone =
+          Expressions.call(BuiltInMethod.TIME_ZONE.method,
+              translator.getRoot());
+      Expression operand = argValueList.get(0);
+      // A value without a time zone is in the session time zone
+      switch (call.getOperands().get(0).getType().getSqlTypeName()) {
+      case TIMESTAMP:
+        operand =
+            Expressions.call(BuiltInMethod.TIMESTAMP_TO_TIMESTAMP_TZ.method,
+                EnumUtils.convert(operand, long.class), timeZone);
+        break;
+      case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+        operand =
+            Expressions.call(
+                BuiltInMethod.TIMESTAMP_WITH_LOCAL_TIME_ZONE_TO_TIMESTAMP_TZ
+                    .method,
+                EnumUtils.convert(operand, long.class), timeZone);
+        break;
+      default:
+        break;
+      }
+      if (call.getOperator() == AT_LOCAL) {
+        return Expressions.call(BuiltInMethod.AT_LOCAL.method, operand,
+            timeZone);
+      }
+      final Expression zone = argValueList.get(1);
+      if (SqlTypeUtil.isCharacter(call.getOperands().get(1).getType())) {
+        return Expressions.call(BuiltInMethod.AT_TIME_ZONE.method, operand,
+            EnumUtils.convert(zone, String.class));
+      }
+      return Expressions.call(BuiltInMethod.AT_TIME_ZONE_OFFSET.method,
+          operand, EnumUtils.convert(zone, long.class));
+    }
+  }
+
+  /** Implementor for the {@code EXTRACT(TIMEZONE_HOUR FROM ...)} and
+   * {@code EXTRACT(TIMEZONE_MINUTE FROM ...)} operators. */
+  private static class TimeZoneFieldImplementor
+      extends AbstractRexCallImplementor {
+    private final boolean hour;
+
+    TimeZoneFieldImplementor(boolean hour) {
+      super("timezone_field", NullPolicy.STRICT, false);
+      this.hour = hour;
+    }
+
+    @Override Expression implementSafe(RexToLixTranslator translator,
+        RexCall call, List<Expression> argValueList) {
+      final BuiltInMethod method;
+      if (call.getOperands().get(0).getType().getSqlTypeName()
+          == SqlTypeName.TIME_TZ) {
+        method = hour
+            ? BuiltInMethod.TIME_TZ_TIMEZONE_HOUR
+            : BuiltInMethod.TIME_TZ_TIMEZONE_MINUTE;
+      } else {
+        method = hour
+            ? BuiltInMethod.TIMEZONE_HOUR
+            : BuiltInMethod.TIMEZONE_MINUTE;
+      }
+      return Expressions.call(method.method, argValueList.get(0));
     }
   }
 

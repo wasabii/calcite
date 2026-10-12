@@ -1296,10 +1296,10 @@ name will have been converted to upper case also.
 | DATE        | Date                      | Example: DATE '1969-07-20'
 | TIME        | Time of day               | Example: TIME '20:17:40'
 | TIME WITH LOCAL TIME ZONE | Time of day with local time zone | Example: TIME WITH LOCAL TIME ZONE '20:17:40'
-| TIME WITH TIME ZONE | Time of day with time zone | Example: TIME '20:17:40 GMT+08'
+| TIME WITH TIME ZONE | Time of day with time zone | Example: TIME WITH TIME ZONE '20:17:40 +08:00'
 | TIMESTAMP [ WITHOUT TIME ZONE ] | Date and time | Example: TIMESTAMP '1969-07-20 20:17:40'
 | TIMESTAMP WITH LOCAL TIME ZONE | Date and time with local time zone | Example: TIMESTAMP WITH LOCAL TIME ZONE '1969-07-20 20:17:40'
-| TIMESTAMP WITH TIME ZONE | Date and time with time zone | Example: TIMESTAMP WITH TIME ZONE '1969-07-20 20:17:40 America/Los Angeles'
+| TIMESTAMP WITH TIME ZONE | Date and time with time zone | Examples: TIMESTAMP WITH TIME ZONE '1969-07-20 20:17:40 +05:30', TIMESTAMP WITH TIME ZONE '1969-07-20 20:17:40 America/Los_Angeles'
 | UUID        | An 128-bit UUID           | Example: UUID '123e4567-e89b-12d3-a456-426655440000'. A string converts to a `UUID` if it holds 32 hexadecimal digits of either case, optionally enclosed in braces, optionally separated by a hyphen after any complete group of four digits; a binary converts if it is exactly 16 bytes. Anything else is an error. Blanks are not trimmed.
 | INTERVAL timeUnit [ TO timeUnit ] | Date time interval | Examples: INTERVAL '1-5' YEAR TO MONTH, INTERVAL '45' DAY, INTERVAL '1 2:34:56.789' DAY TO SECOND
 | GEOMETRY | Geometry | Examples: ST_GeomFromText('POINT (30 10)')
@@ -1318,6 +1318,21 @@ Note:
   It is left to the user or application to supply a time zone. In turn,
   TIMESTAMP WITH LOCAL TIME ZONE does not store the time zone internally, but
   it will rely on the supplied time zone to provide correct semantics.
+* A TIMESTAMP WITH TIME ZONE value is a date and time plus a time zone,
+  which is either an offset from UTC between -14:00 and +14:00 (such as
+  `+05:30`, or `Z` for `+00:00`) or, as an extension to the SQL standard, a
+  time zone region (such as `America/New_York`). The zone is kept as given,
+  and is used when the value is converted to a string, when you add an
+  interval, and by `FLOOR` and `CEIL`. Two values that denote the same
+  instant are equal, even if their zones differ; for example,
+  `TIMESTAMP WITH TIME ZONE '2020-01-01 10:00:00 +01:00'` equals
+  `TIMESTAMP WITH TIME ZONE '2020-01-01 12:00:00 +03:00'`. `GROUP BY`,
+  `DISTINCT` and `ORDER BY` also use the instant.
+  Converting a TIMESTAMP WITH TIME ZONE value to TIMESTAMP, DATE or TIME
+  gives its local date and time in the session time zone; converting a
+  TIMESTAMP value to TIMESTAMP WITH TIME ZONE interprets it in the session
+  time zone. `EXTRACT` of a field such as `HOUR` returns the field in UTC.
+  TIME WITH TIME ZONE is similar, but its zone is always an offset.
 * GEOMETRY is allowed only in certain
   [conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#allowGeometry--).
 * Interval literals may only use time units
@@ -1621,6 +1636,10 @@ Not implemented:
 | CURRENT_DATE              | Returns the current date in the session time zone, in a value of datatype DATE
 | CURRENT_TIMESTAMP         | Returns the current date and time in the session time zone, in a value of datatype TIMESTAMP WITH TIME ZONE
 | EXTRACT(timeUnit FROM datetime) | Extracts and returns the value of a specified datetime field from a datetime value expression
+| EXTRACT(TIMEZONE_HOUR FROM datetime) | Returns the hour component of the time zone offset of *datetime*, a TIMESTAMP WITH TIME ZONE or TIME WITH TIME ZONE value; for example, -3 for an offset of -03:30
+| EXTRACT(TIMEZONE_MINUTE FROM datetime) | Returns the minute component of the time zone offset of *datetime*, a TIMESTAMP WITH TIME ZONE or TIME WITH TIME ZONE value; for example, -30 for an offset of -03:30
+| datetime AT TIME ZONE zone | Converts *datetime* to a TIMESTAMP WITH TIME ZONE value that denotes the same instant in time zone *zone*. *zone* is an interval (such as `INTERVAL '05:30' HOUR TO MINUTE`) or a string (such as `'+05:30'` or `'America/New_York'`). If *datetime* is a TIMESTAMP, it is assumed to be in the session time zone
+| datetime AT LOCAL         | Equivalent to `datetime AT TIME ZONE` the session time zone, except that the result's zone is the session time zone's offset at that instant
 | FLOOR(datetime TO timeUnit) | Rounds *datetime* down to *timeUnit*
 | CEIL(datetime TO timeUnit) | Rounds *datetime* up to *timeUnit*
 | FLOOR(interval) | Rounds *interval* down to a multiple of its leading time unit; for example, `FLOOR(INTERVAL '3:04:05' HOUR TO SECOND)` returns `INTERVAL '3:00:00' HOUR TO SECOND`

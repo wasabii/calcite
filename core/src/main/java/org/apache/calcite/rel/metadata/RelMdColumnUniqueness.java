@@ -53,6 +53,8 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Pair;
+import org.apache.calcite.util.TimeWithTimeZoneString;
+import org.apache.calcite.util.TimestampWithTimeZoneString;
 import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
@@ -60,6 +62,7 @@ import com.google.common.collect.ImmutableSet;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -446,6 +449,13 @@ public class RelMdColumnUniqueness
       for (int column : columns) {
         final RexLiteral literal = tuple.get(column);
         Comparable value = literal.getValueAs(Comparable.class);
+        if (value instanceof TimestampWithTimeZoneString) {
+          // Values that denote the same instant are not distinct
+          value = ((TimestampWithTimeZoneString) value).toInstant();
+        } else if (value instanceof TimeWithTimeZoneString) {
+          value = ((TimeWithTimeZoneString) value).toOffsetTime()
+              .withOffsetSameInstant(ZoneOffset.UTC).toLocalTime();
+        }
         values.add(value == null ? NullSentinel.INSTANCE : value);
       }
       if (!set.add(ImmutableList.copyOf(values))) {

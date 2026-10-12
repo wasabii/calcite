@@ -86,37 +86,52 @@ public class SqlParserUtilTest {
     SqlParserPos pos = new SqlParserPos(2, 3);
     SqlTimestampTzLiteral lit =
         SqlParserUtil.parseTimestampTzLiteral("2020-01-01 10:10:10 GMT", pos);
-    assertThat(lit, hasToString("TIMESTAMP_TZ '2020-01-01 10:10:10 GMT'"));
+    assertThat(lit,
+        hasToString("TIMESTAMP WITH TIME ZONE '2020-01-01 10:10:10 GMT'"));
 
     lit = SqlParserUtil.parseTimestampTzLiteral("2020-01-01 10:10:10 UTC", pos);
-    assertThat(lit, hasToString("TIMESTAMP_TZ '2020-01-01 10:10:10 UTC'"));
+    assertThat(lit,
+        hasToString("TIMESTAMP WITH TIME ZONE '2020-01-01 10:10:10 UTC'"));
 
     lit = SqlParserUtil.parseTimestampTzLiteral("2020-01-01 10:10:10 America/Los_Angeles", pos);
-    assertThat(lit, hasToString("TIMESTAMP_TZ '2020-01-01 10:10:10 America/Los_Angeles'"));
+    assertThat(lit,
+        hasToString("TIMESTAMP WITH TIME ZONE '2020-01-01 10:10:10 America/Los_Angeles'"));
 
+    // An offset is kept as an offset; a zero offset is written "+00:00"
     lit = SqlParserUtil.parseTimestampTzLiteral("2020-01-01 10:10:10 +00:00", pos);
-    assertThat(lit, hasToString("TIMESTAMP_TZ '2020-01-01 10:10:10 UTC'"));
+    assertThat(lit,
+        hasToString("TIMESTAMP WITH TIME ZONE '2020-01-01 10:10:10 +00:00'"));
 
     lit = SqlParserUtil.parseTimestampTzLiteral("2020-01-01 10:10:10 Z", pos);
-    assertThat(lit, hasToString("TIMESTAMP_TZ '2020-01-01 10:10:10 UTC'"));
+    assertThat(lit,
+        hasToString("TIMESTAMP WITH TIME ZONE '2020-01-01 10:10:10 +00:00'"));
 
     lit = SqlParserUtil.parseTimestampTzLiteral("2020-01-01 10:10:10 -00:30", pos);
-    assertThat(lit, hasToString("TIMESTAMP_TZ '2020-01-01 10:10:10 GMT-00:30'"));
+    assertThat(lit,
+        hasToString("TIMESTAMP WITH TIME ZONE '2020-01-01 10:10:10 -00:30'"));
 
     lit = SqlParserUtil.parseTimestampTzLiteral("2020-01-01 10:10:10 +05:45", pos);
-    assertThat(lit, hasToString("TIMESTAMP_TZ '2020-01-01 10:10:10 GMT+05:45'"));
+    assertThat(lit,
+        hasToString("TIMESTAMP WITH TIME ZONE '2020-01-01 10:10:10 +05:45'"));
 
-    // Test case for [CALCITE-7527] SqlParserUtil.parseTimestampTzLiteral does not validate timezone
-    // https://issues.apache.org/jira/browse/CALCITE-7527
+    // An offset may follow the time directly, as in ISO 8601
+    lit = SqlParserUtil.parseTimestampTzLiteral("2020-06-21 14:23:44.123654+00:00", pos);
+    assertThat(lit,
+        hasToString("TIMESTAMP WITH TIME ZONE '2020-06-21 14:23:44.123654 +00:00'"));
+
+    // An offset outside -14:00 to +14:00 is invalid
     try {
-      SqlParserUtil.parseTimestampTzLiteral("2020-06-21 14:23:44.123654+00:00", pos);
+      SqlParserUtil.parseTimestampTzLiteral("2020-06-21 14:23:44 +15:00", pos);
       fail("Should be unreachable");
     } catch (CalciteContextException ex) {
       assertThat(
           ex.getMessage(), is("At line 2, column 3: Illegal TIMESTAMP WITH TIME ZONE literal "
-              + "'2020-06-21 14:23:44.123654+00:00': not in format 'yyyy-MM-dd HH:mm:ss zone'"));
+              + "'2020-06-21 14:23:44 +15:00': Time zone offset +15:00 is out of range; "
+              + "it must be between -14:00 and +14:00"));
     }
 
+    // Test case for [CALCITE-7527] SqlParserUtil.parseTimestampTzLiteral does not validate timezone
+    // https://issues.apache.org/jira/browse/CALCITE-7527
     try {
       SqlParserUtil.parseTimestampTzLiteral("2020-06-21 14:23:44.123654 incorrect_zone", pos);
       fail("Should be unreachable");
@@ -135,7 +150,11 @@ public class SqlParserUtilTest {
     SqlParserPos pos = new SqlParserPos(2, 3);
     SqlTimeTzLiteral lit =
         SqlParserUtil.parseTimeTzLiteral("10:10:10 GMT", pos);
-    assertThat(lit, hasToString("TIME WITH TIME ZONE '10:10:10 UTC'"));
+    assertThat(lit, hasToString("TIME WITH TIME ZONE '10:10:10 GMT'"));
+
+    // The zone is kept as given; an offset may follow the time directly
+    lit = SqlParserUtil.parseTimeTzLiteral("10:10:10.5+05:30", pos);
+    assertThat(lit, hasToString("TIME WITH TIME ZONE '10:10:10.5 +05:30'"));
 
     // Like parseTimestampTzLiteral, parseTimeTzLiteral should reject unknown
     // time zones instead of silently falling back to GMT.

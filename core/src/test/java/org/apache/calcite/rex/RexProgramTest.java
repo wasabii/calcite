@@ -3784,7 +3784,7 @@ class RexProgramTest extends RexProgramTestBase {
       new TimestampWithTimeZoneString("2011-07-20T10:34:56America/Los_Angeles");
     } catch (Exception ex) {
       assertThat(
-          ex.getMessage(), is("Illegal TIMESTAMP WITH LOCAL TIME ZONE literal "
+          ex.getMessage(), is("Illegal TIMESTAMP WITH TIME ZONE literal "
           + "'2011-07-20T10:34:56America/Los_Angeles': not in format 'yyyy-MM-dd HH:mm:ss zone'"));
       return;
     }

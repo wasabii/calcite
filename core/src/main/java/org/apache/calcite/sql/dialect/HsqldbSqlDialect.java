@@ -18,6 +18,7 @@ package org.apache.calcite.sql.dialect;
 
 import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.sql.SqlAbstractDateTimeLiteral;
 import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDialect;
@@ -25,6 +26,8 @@ import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
+import org.apache.calcite.sql.SqlTimeTzLiteral;
+import org.apache.calcite.sql.SqlTimestampTzLiteral;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.fun.SqlCase;
 import org.apache.calcite.sql.fun.SqlFloorFunction;
@@ -50,6 +53,28 @@ public class HsqldbSqlDialect extends SqlDialect {
   }
 
   @Override public boolean supportsNestedAggregations() {
+    return false;
+  }
+
+  @Override public void unparseDateTimeLiteral(SqlWriter writer,
+      SqlAbstractDateTimeLiteral literal, int leftPrec, int rightPrec) {
+    if (literal instanceof SqlTimestampTzLiteral
+        || literal instanceof SqlTimeTzLiteral) {
+      // HSQLDB writes a TIMESTAMP or TIME literal with an offset, such as
+      // TIMESTAMP '2020-01-01 10:00:00+05:30', which has type TIMESTAMP WITH
+      // TIME ZONE; the offset must follow the time directly.
+      final String s = literal.toFormattedString();
+      final int i = s.lastIndexOf(' ');
+      writer.literal(
+          (literal instanceof SqlTimestampTzLiteral ? "TIMESTAMP '" : "TIME '")
+              + s.substring(0, i) + s.substring(i + 1) + "'");
+      return;
+    }
+    super.unparseDateTimeLiteral(writer, literal, leftPrec, rightPrec);
+  }
+
+  @Override public boolean supportsTimeZoneRegions() {
+    // TIMESTAMP WITH TIME ZONE stores an offset
     return false;
   }
 

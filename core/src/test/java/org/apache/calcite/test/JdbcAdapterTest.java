@@ -46,6 +46,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.locks.Lock;
@@ -158,6 +159,42 @@ class JdbcAdapterTest {
         .runs()
         .enable(CalciteAssert.DB == DatabaseInstance.HSQLDB)
         .returnsCount(14);
+  }
+
+  /** Tests that a filter on TIMESTAMP WITH TIME ZONE whose literal has an
+   * offset is pushed down to HSQLDB, but one whose literal has a time zone
+   * region is not, because HSQLDB values have only offsets. */
+  @Test void testTimestampTzFilterPushDown() {
+    final String sql = "select empno from scott.emp\n"
+        + "where cast(hiredate as timestamp with time zone)\n"
+        + "  > timestamp with time zone '1981-06-01 00:00:00 %s'";
+    CalciteAssert.model(JdbcTest.SCOTT_MODEL)
+        .query(String.format(Locale.ROOT, sql, "+05:30"))
+        .explainContains("PLAN=JdbcToEnumerableConverter\n"
+            + "  JdbcProject(EMPNO=[$0])\n"
+            + "    JdbcFilter(condition=[>(CAST($4):TIMESTAMP_TZ(0), "
+            + "1981-06-01 00:00:00 +05:30)])\n"
+            + "      JdbcTableScan(table=[[SCOTT, EMP]])");
+    CalciteAssert.model(JdbcTest.SCOTT_MODEL)
+        .query(String.format(Locale.ROOT, sql, "America/New_York"))
+        .explainContains("PLAN=EnumerableCalc(expr#0..7=[{inputs}], "
+            + "expr#8=[CAST($t4):TIMESTAMP_TZ(0)], "
+            + "expr#9=[1981-06-01 00:00:00 America/New_York:TIMESTAMP_TZ(0)], "
+            + "expr#10=[>($t8, $t9)], EMPNO=[$t0], $condition=[$t10])\n"
+            + "  JdbcToEnumerableConverter\n"
+            + "    JdbcTableScan(table=[[SCOTT, EMP]])");
+  }
+
+  /** Tests reading TIMESTAMP WITH TIME ZONE values from HSQLDB, and
+   * comparing them in HSQLDB. */
+  @Test void testTimestampTzFromJdbc() {
+    CalciteAssert.model(JdbcTest.SCOTT_MODEL)
+        .query("select empno,\n"
+            + "  cast(hiredate as timestamp with time zone) as t\n"
+            + "from scott.emp\n"
+            + "where cast(hiredate as timestamp with time zone)\n"
+            + "  < timestamp with time zone '1981-01-01 00:00:00 +00:00'")
+        .returns("EMPNO=7369; T=1980-12-17 00:00:00 +00:00\n");
   }
 
   @Test void testUnionPlan() {
