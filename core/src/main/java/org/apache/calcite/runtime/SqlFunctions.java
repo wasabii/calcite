@@ -6426,6 +6426,7 @@ public class SqlFunctions {
 
   /** Converts a value returned by a JDBC driver for a TIMESTAMP WITH TIME
    * ZONE column to a TIMESTAMP WITH TIME ZONE value. */
+  @SuppressWarnings("JavaUtilDate") // some drivers return java.sql.Timestamp
   public static @Nullable ZonedDateTime objectToTimestampTz(@Nullable Object o) {
     if (o == null || o instanceof ZonedDateTime) {
       return (ZonedDateTime) o;
