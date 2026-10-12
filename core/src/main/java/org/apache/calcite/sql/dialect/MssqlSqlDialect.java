@@ -37,6 +37,7 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSyntax;
+import org.apache.calcite.sql.SqlTimestampTzLiteral;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.SqlUuidLiteral;
 import org.apache.calcite.sql.SqlWriter;
@@ -107,6 +108,7 @@ public class MssqlSqlDialect extends SqlDialect {
       // fixed-precision date/time type is DATETIME2 (SQL Server 2008+).
       return createDatetimeCastSpec("DATETIME2", type);
     case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+    case TIMESTAMP_TZ:
       // SQL Server's timezone-aware date/time type.
       return createDatetimeCastSpec("DATETIMEOFFSET", type);
     case VARCHAR:
@@ -209,7 +211,29 @@ public class MssqlSqlDialect extends SqlDialect {
 
   @Override public void unparseDateTimeLiteral(SqlWriter writer,
       SqlAbstractDateTimeLiteral literal, int leftPrec, int rightPrec) {
+    if (literal instanceof SqlTimestampTzLiteral) {
+      // A string such as '2020-01-01 10:00:00 +05:30' would not be
+      // converted to DATETIMEOFFSET in all contexts
+      writer.literal("CAST('" + literal.toFormattedString()
+          + "' AS DATETIMEOFFSET(" + Math.min(literal.getPrec(), 7) + "))");
+      return;
+    }
     writer.literal("'" + literal.toFormattedString() + "'");
+  }
+
+  @Override public boolean supportsDataType(RelDataType type) {
+    switch (type.getSqlTypeName()) {
+    case TIME_TZ:
+      // SQL Server has no TIME WITH TIME ZONE type
+      return false;
+    default:
+      return super.supportsDataType(type);
+    }
+  }
+
+  @Override public boolean supportsTimeZoneRegions() {
+    // DATETIMEOFFSET stores an offset
+    return false;
   }
 
   @Override public void unparseUuidLiteral(SqlWriter writer,

@@ -77,6 +77,8 @@ import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.text.Collator;
+import java.time.OffsetTime;
+import java.time.ZonedDateTime;
 import java.util.AbstractList;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -369,6 +371,10 @@ public class EnumUtils {
     if (Types.isAssignableFrom(targetType, fromType)) {
       return operand;
     }
+    final Expression zoned = convertZoned(operand, fromType, targetType);
+    if (zoned != null) {
+      return zoned;
+    }
     if (targetType == java.sql.Date.class) {
       // E.g. from "int" or "Integer" to "java.sql.Date",
       // generate "SqlFunctions.internalToDate".
@@ -397,6 +403,70 @@ public class EnumUtils {
           Primitive.unbox(targetType));
     }
     return operand;
+  }
+
+  /** Converts between the runtime representations of TIMESTAMP WITH TIME
+   * ZONE ({@link ZonedDateTime}) and TIME WITH TIME ZONE
+   * ({@link OffsetTime}) and other types; returns null if neither type is
+   * one of those, or there is no conversion.
+   *
+   * <p>A {@code long} is the number of milliseconds since the UNIX epoch,
+   * and an {@code int} is the number of milliseconds since midnight UTC, as
+   * for TIMESTAMP WITH LOCAL TIME ZONE and TIME WITH LOCAL TIME ZONE. */
+  private static @Nullable Expression convertZoned(Expression operand,
+      Type fromType, Type toType) {
+    if (fromType == ZonedDateTime.class) {
+      if (toType == long.class) {
+        return Expressions.call(BuiltInMethod.TIMESTAMP_TZ_TO_EPOCH_MILLIS.method,
+            operand);
+      } else if (toType == Long.class) {
+        return Expressions.call(
+            BuiltInMethod.TIMESTAMP_TZ_TO_EPOCH_MILLIS_OPTIONAL.method, operand);
+      } else if (toType == String.class) {
+        return Expressions.condition(
+            Expressions.equal(operand, RexImpTable.NULL_EXPR),
+            RexImpTable.NULL_EXPR,
+            Expressions.call(BuiltInMethod.TIMESTAMP_TZ_TO_STRING.method,
+                operand));
+      }
+    } else if (toType == ZonedDateTime.class) {
+      if (fromType == long.class) {
+        return Expressions.call(
+            BuiltInMethod.TIMESTAMP_TZ_FROM_EPOCH_MILLIS.method, operand);
+      } else if (fromType == Long.class) {
+        return Expressions.call(
+            BuiltInMethod.TIMESTAMP_TZ_FROM_EPOCH_MILLIS_OPTIONAL.method,
+            operand);
+      } else if (fromType == String.class) {
+        return Expressions.call(BuiltInMethod.STRING_TO_TIMESTAMP_TZ.method,
+            operand);
+      }
+    } else if (fromType == OffsetTime.class) {
+      if (toType == int.class) {
+        return Expressions.call(BuiltInMethod.TIME_TZ_TO_MILLIS_OF_DAY.method,
+            operand);
+      } else if (toType == Integer.class) {
+        return Expressions.call(
+            BuiltInMethod.TIME_TZ_TO_MILLIS_OF_DAY_OPTIONAL.method, operand);
+      } else if (toType == String.class) {
+        return Expressions.condition(
+            Expressions.equal(operand, RexImpTable.NULL_EXPR),
+            RexImpTable.NULL_EXPR,
+            Expressions.call(BuiltInMethod.TIME_TZ_TO_STRING.method, operand));
+      }
+    } else if (toType == OffsetTime.class) {
+      if (fromType == int.class) {
+        return Expressions.call(BuiltInMethod.TIME_TZ_FROM_MILLIS_OF_DAY.method,
+            operand);
+      } else if (fromType == Integer.class) {
+        return Expressions.call(
+            BuiltInMethod.TIME_TZ_FROM_MILLIS_OF_DAY_OPTIONAL.method, operand);
+      } else if (fromType == String.class) {
+        return Expressions.call(BuiltInMethod.STRING_TO_TIME_TZ.method,
+            operand);
+      }
+    }
+    return null;
   }
 
   static List<Expression> fromInternal(Class<?>[] targetTypes,
@@ -485,6 +555,10 @@ public class EnumUtils {
     }
     if (fromType == ByteString.class && toType == byte[].class) {
       return Expressions.call(BuiltInMethod.BYTE_STRING_TO_BYTE_ARRAY.method, operand);
+    }
+    final Expression zoned = convertZoned(operand, fromType, toType);
+    if (zoned != null) {
+      return zoned;
     }
 
     // TODO use Expressions#convertChecked to throw exception in case of overflow (CALCITE-6366)

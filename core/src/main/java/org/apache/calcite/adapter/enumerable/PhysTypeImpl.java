@@ -585,6 +585,13 @@ public class PhysTypeImpl implements PhysType {
   }
 
   @Override public @Nullable Expression comparer() {
+    if (anyFieldContainsZoned(rowType)) {
+      // TIMESTAMP WITH TIME ZONE and TIME WITH TIME ZONE values that denote
+      // the same instant are equal (not distinct), but their runtime
+      // representations (ZonedDateTime, OffsetTime) are not equal if their
+      // zones differ. The deep comparer compares them by instant.
+      return Expressions.call(BuiltInMethod.DEEP_COMPARER.method);
+    }
     final Expression comparer = format.comparer();
     if (comparer != null) {
       return comparer;
@@ -605,6 +612,36 @@ public class PhysTypeImpl implements PhysType {
   private static boolean anyFieldContainsStruct(RelDataType rowType) {
     return rowType.getFieldList().stream()
         .anyMatch(f -> containsStruct(f.getType()));
+  }
+
+  /** Returns whether any field of {@code rowType} contains a TIMESTAMP WITH
+   * TIME ZONE or TIME WITH TIME ZONE value. */
+  private static boolean anyFieldContainsZoned(RelDataType rowType) {
+    return rowType.getFieldList().stream()
+        .anyMatch(f -> containsZoned(f.getType()));
+  }
+
+  private static boolean containsZoned(RelDataType type) {
+    switch (type.getSqlTypeName()) {
+    case TIMESTAMP_TZ:
+    case TIME_TZ:
+      return true;
+    default:
+      break;
+    }
+    if (type.isStruct()) {
+      return anyFieldContainsZoned(type);
+    }
+    final RelDataType componentType = type.getComponentType();
+    if (componentType != null && containsZoned(componentType)) {
+      return true;
+    }
+    final RelDataType keyType = type.getKeyType();
+    if (keyType != null && containsZoned(keyType)) {
+      return true;
+    }
+    final RelDataType valueType = type.getValueType();
+    return valueType != null && containsZoned(valueType);
   }
 
   private static boolean containsStruct(RelDataType type) {

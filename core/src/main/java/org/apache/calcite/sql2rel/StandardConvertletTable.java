@@ -165,6 +165,7 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
           case DATE:
           case TIME:
           case TIMESTAMP:
+          case TIMESTAMP_TZ:
             return convertDatetimeMinus(cx, SqlStdOperatorTable.MINUS_DATE,
                 call);
           default:
@@ -1388,6 +1389,7 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
     case DATE:
     case TIME:
     case TIMESTAMP:
+    case TIMESTAMP_TZ:
       // Use special "+" operator for datetime + interval.
       // Re-order operands, if necessary, so that interval is second.
       final RexBuilder rexBuilder = cx.getRexBuilder();

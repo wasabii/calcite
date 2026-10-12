@@ -26,6 +26,7 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.SpatialTypeFunctions;
+import org.apache.calcite.runtime.SqlFunctions;
 import org.apache.calcite.runtime.variant.VariantValue;
 import org.apache.calcite.sql.SqlCollation;
 import org.apache.calcite.sql.SqlKind;
@@ -61,10 +62,7 @@ import java.math.MathContext;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
+import java.time.OffsetTime;
 import java.time.ZonedDateTime;
 import java.util.Calendar;
 import java.util.List;
@@ -1177,7 +1175,11 @@ public class RexLiteral extends RexNode {
       break;
     case TIME_TZ:
       if (clazz == Integer.class) {
-        return clazz.cast(((TimeWithTimeZoneString) value).getLocalTimeString().getMillisOfDay());
+        // Milliseconds since midnight UTC
+        final OffsetTime t = ((TimeWithTimeZoneString) value).toOffsetTime();
+        return clazz.cast(SqlFunctions.timeTzToMillisOfDay(t));
+      } else if (clazz == OffsetTime.class) {
+        return clazz.cast(((TimeWithTimeZoneString) value).toOffsetTime());
       }
       break;
     case TIMESTAMP:
@@ -1191,18 +1193,13 @@ public class RexLiteral extends RexNode {
       break;
     case TIMESTAMP_TZ:
       if (clazz == Long.class) {
-        TimestampWithTimeZoneString tstz = (TimestampWithTimeZoneString) value;
-        long ms = tstz
-            .getLocalTimestampString()
-            .getMillisSinceEpoch();
-        // Interpret the timestamp part as a UTC timestamp
-        LocalDateTime local = Instant.ofEpochMilli(ms).atZone(ZoneOffset.UTC).toLocalDateTime();
-        // Adjust for the time zone
-        ZoneId id = tstz.getTimeZone().toZoneId();
-        ZonedDateTime zoned = local.atZone(id);
-        ZonedDateTime utc = zoned.withZoneSameInstant(ZoneOffset.UTC);
-        ms = utc.toInstant().toEpochMilli();
-        return clazz.cast(ms);
+        // Milliseconds since the epoch (1970-01-01 00:00:00 UTC) of the
+        // instant
+        return clazz.cast(
+            ((TimestampWithTimeZoneString) value).getMillisSinceEpoch());
+      } else if (clazz == ZonedDateTime.class) {
+        return clazz.cast(
+            ((TimestampWithTimeZoneString) value).toZonedDateTime());
       } else if (clazz == Calendar.class) {
         TimestampWithTimeZoneString ts = (TimestampWithTimeZoneString) value;
         return clazz.cast(ts.getLocalTimestampString().toCalendar(ts.getTimeZone()));

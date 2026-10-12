@@ -44,6 +44,7 @@ import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.fun.SqlLibraryOperators;
 import org.apache.calcite.sql.parser.SqlParserUtil;
+import org.apache.calcite.util.DateTimeStringUtils;
 import org.apache.calcite.util.NumberUtil;
 import org.apache.calcite.util.TimeWithTimeZoneString;
 import org.apache.calcite.util.TimestampWithTimeZoneString;
@@ -108,6 +109,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.OffsetTime;
 import java.time.Period;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -6360,7 +6362,7 @@ public class SqlFunctions {
     if (v == null) {
       return castNonNull(null);
     }
-    return new TimestampWithTimeZoneString(v)
+    return parseLocalTimestamp(v)
         .withTimeZone(DateTimeUtils.UTC_ZONE)
         .getLocalTimestampString()
         .getMillisSinceEpoch();
@@ -6371,10 +6373,494 @@ public class SqlFunctions {
     if (v == null) {
       return castNonNull(null);
     }
-    return new TimestampWithTimeZoneString(v + " " + timeZone.getID())
+    return parseLocalTimestamp(v + " " + timeZone.getID())
         .withTimeZone(DateTimeUtils.UTC_ZONE)
         .getLocalTimestampString()
         .getMillisSinceEpoch();
+  }
+
+  /** Parses a string such as "2020-01-01 10:00:00 UTC" as the value of a
+   * TIMESTAMP WITH LOCAL TIME ZONE literal. */
+  private static TimestampWithTimeZoneString parseLocalTimestamp(String v) {
+    try {
+      return new TimestampWithTimeZoneString(v);
+    } catch (CalciteException e) {
+      throw RESOURCE.illegalLiteral("TIMESTAMP WITH LOCAL TIME ZONE", v,
+          RESOURCE.badFormat(DateTimeUtils.TIMESTAMP_FORMAT_STRING + " zone")
+              .str()).ex();
+    }
+  }
+
+  // TIMESTAMP WITH TIME ZONE values are represented at runtime as
+  // ZonedDateTime, whose zone is either a ZoneOffset or a region;
+  // TIME WITH TIME ZONE values are represented as OffsetTime.
+  //
+  // ZonedDateTime.equals and hashCode take the zone into account, but SQL
+  // says that two values that denote the same instant are equal; so
+  // comparisons go through the methods below, which compare instants.
+
+  /** Converts a string such as "2020-01-01 10:00:00 America/New_York" or
+   * "2020-01-01 10:00:00+05:30" to a TIMESTAMP WITH TIME ZONE value. */
+  public static @PolyNull ZonedDateTime toTimestampTz(@PolyNull String v) {
+    if (v == null) {
+      return castNonNull(null);
+    }
+    return new TimestampWithTimeZoneString(v.trim()).toZonedDateTime();
+  }
+
+  /** Converts a string to a TIMESTAMP WITH TIME ZONE value; if the string has
+   * no time zone, the timestamp is interpreted in the given time zone, as
+   * for {@code CAST(... AS TIMESTAMP WITH TIME ZONE)}. */
+  public static @PolyNull ZonedDateTime toTimestampTz(@PolyNull String v,
+      TimeZone timeZone) {
+    if (v == null) {
+      return castNonNull(null);
+    }
+    final String s = v.trim();
+    if (DateTimeStringUtils.splitDateTimeZone(s) != null) {
+      return toTimestampTz(s);
+    }
+    return timestampToTimestampTz(DateTimeUtils.timestampStringToUnixDate(s),
+        timeZone);
+  }
+
+  /** Converts a value returned by a JDBC driver for a TIMESTAMP WITH TIME
+   * ZONE column to a TIMESTAMP WITH TIME ZONE value. */
+  @SuppressWarnings("JavaUtilDate") // some drivers return java.sql.Timestamp
+  public static @Nullable ZonedDateTime objectToTimestampTz(@Nullable Object o) {
+    if (o == null || o instanceof ZonedDateTime) {
+      return (ZonedDateTime) o;
+    }
+    if (o instanceof OffsetDateTime) {
+      return ((OffsetDateTime) o).toZonedDateTime();
+    }
+    if (o instanceof Instant) {
+      return ((Instant) o).atZone(ZoneOffset.UTC);
+    }
+    if (o instanceof java.util.Date) {
+      return Instant.ofEpochMilli(((java.util.Date) o).getTime())
+          .atZone(ZoneOffset.UTC);
+    }
+    if (o instanceof String) {
+      return toTimestampTz((String) o);
+    }
+    throw new IllegalArgumentException("Cannot convert " + o.getClass()
+        + " to TIMESTAMP WITH TIME ZONE");
+  }
+
+  /** Converts a value returned by a JDBC driver for a TIME WITH TIME ZONE
+   * column to a TIME WITH TIME ZONE value. */
+  public static @Nullable OffsetTime objectToTimeTz(@Nullable Object o) {
+    if (o == null || o instanceof OffsetTime) {
+      return (OffsetTime) o;
+    }
+    if (o instanceof OffsetDateTime) {
+      return ((OffsetDateTime) o).toOffsetTime();
+    }
+    if (o instanceof String) {
+      return toTimeTz((String) o);
+    }
+    throw new IllegalArgumentException("Cannot convert " + o.getClass()
+        + " to TIME WITH TIME ZONE");
+  }
+
+  /** Converts a TIMESTAMP WITH TIME ZONE value to a string, in its own
+   * zone, for example "2020-01-01 10:00:00 +05:30". */
+  public static String timestampTzToString(ZonedDateTime v) {
+    return TimestampWithTimeZoneString.fromZonedDateTime(v).toString();
+  }
+
+  /** Converts a TIMESTAMP WITH TIME ZONE value to a string, in its own
+   * zone, with a given number of fractional digits. */
+  public static String timestampTzToString(ZonedDateTime v, int precision) {
+    return TimestampWithTimeZoneString.fromZonedDateTime(v)
+        .toString(Math.max(precision, 0));
+  }
+
+  /** Returns the number of milliseconds since the UNIX epoch of the instant
+   * that a TIMESTAMP WITH TIME ZONE value denotes. */
+  public static long timestampTzToEpochMillis(ZonedDateTime v) {
+    return v.toInstant().toEpochMilli();
+  }
+
+  /** As {@link #timestampTzToEpochMillis(ZonedDateTime)}, but nullable. */
+  public static @PolyNull Long timestampTzToEpochMillisOptional(
+      @PolyNull ZonedDateTime v) {
+    return v == null ? castNonNull(null) : timestampTzToEpochMillis(v);
+  }
+
+  /** Converts a number of milliseconds since the UNIX epoch to a
+   * TIMESTAMP WITH TIME ZONE value in UTC (offset +00:00). */
+  public static ZonedDateTime timestampTzFromEpochMillis(long v) {
+    return Instant.ofEpochMilli(v).atZone(ZoneOffset.UTC);
+  }
+
+  /** As {@link #timestampTzFromEpochMillis(long)}, but nullable. */
+  public static @PolyNull ZonedDateTime timestampTzFromEpochMillisOptional(
+      @PolyNull Long v) {
+    return v == null ? castNonNull(null) : timestampTzFromEpochMillis(v);
+  }
+
+  /** Converts a local timestamp (milliseconds since 1970-01-01 00:00:00,
+   * without zone) to a local date-time. */
+  private static LocalDateTime toLocalDateTime(long v) {
+    return LocalDateTime.ofEpochSecond(Math.floorDiv(v, 1000L),
+        (int) Math.floorMod(v, 1000L) * 1_000_000, ZoneOffset.UTC);
+  }
+
+  /** Converts a local date-time to a local timestamp (milliseconds since
+   * 1970-01-01 00:00:00, without zone). */
+  private static long toLocalMillis(LocalDateTime t) {
+    return t.toInstant(ZoneOffset.UTC).toEpochMilli();
+  }
+
+  /** Converts a TIMESTAMP value to TIMESTAMP WITH TIME ZONE, interpreting it
+   * in the given (session) time zone; as in the SQL standard, the result's
+   * zone is the session's offset at that instant. */
+  public static ZonedDateTime timestampToTimestampTz(long v,
+      TimeZone timeZone) {
+    return toLocalDateTime(v).atZone(timeZone.toZoneId()).withFixedOffsetZone();
+  }
+
+  /** Converts a DATE value to TIMESTAMP WITH TIME ZONE, at midnight in the
+   * given (session) time zone. */
+  public static ZonedDateTime dateToTimestampTz(int v, TimeZone timeZone) {
+    return timestampToTimestampTz(v * DateTimeUtils.MILLIS_PER_DAY, timeZone);
+  }
+
+  /** Converts a TIMESTAMP WITH LOCAL TIME ZONE value to TIMESTAMP WITH TIME
+   * ZONE; the instant is kept, and the result's zone is the session's
+   * offset at that instant. */
+  public static ZonedDateTime timestampWithLocalTimeZoneToTimestampTz(long v,
+      TimeZone timeZone) {
+    final Instant instant = Instant.ofEpochMilli(v);
+    return instant.atZone(timeZone.toZoneId()).withFixedOffsetZone();
+  }
+
+  /** Converts a TIMESTAMP WITH TIME ZONE value to TIMESTAMP, in the given
+   * (session) time zone, as the SQL standard requires. */
+  public static long timestampTzToTimestamp(ZonedDateTime v,
+      TimeZone timeZone) {
+    return toLocalMillis(
+        v.withZoneSameInstant(timeZone.toZoneId()).toLocalDateTime());
+  }
+
+  /** Converts a TIMESTAMP WITH TIME ZONE value to DATE, in the given
+   * (session) time zone. */
+  public static int timestampTzToDate(ZonedDateTime v, TimeZone timeZone) {
+    return (int) v.withZoneSameInstant(timeZone.toZoneId()).toLocalDate()
+        .toEpochDay();
+  }
+
+  /** Converts a TIMESTAMP WITH TIME ZONE value to TIME, in the given
+   * (session) time zone. */
+  public static int timestampTzToTime(ZonedDateTime v, TimeZone timeZone) {
+    return (int) (v.withZoneSameInstant(timeZone.toZoneId()).toLocalTime()
+        .toNanoOfDay() / 1_000_000L);
+  }
+
+  /** Converts a TIMESTAMP WITH TIME ZONE value to TIMESTAMP WITH LOCAL TIME
+   * ZONE; the instant is kept. */
+  public static long timestampTzToTimestampWithLocalTimeZone(ZonedDateTime v) {
+    return timestampTzToEpochMillis(v);
+  }
+
+  /** Converts a TIMESTAMP WITH TIME ZONE value to TIME WITH TIME ZONE; the
+   * time and offset are kept. */
+  public static OffsetTime timestampTzToTimeTz(ZonedDateTime v) {
+    return v.toOffsetDateTime().toOffsetTime();
+  }
+
+  /** Converts a TIMESTAMP WITH TIME ZONE value to TIMESTAMP WITH TIME ZONE
+   * of a lower precision. */
+  public static ZonedDateTime roundTimestampTz(ZonedDateTime v, int precision) {
+    final long unit = (long) Math.pow(10, 9 - Math.max(0, Math.min(9, precision)));
+    final long nanos = v.getNano();
+    final long rounded = nanos - Math.floorMod(nanos, unit);
+    return rounded == nanos ? v : v.withNano((int) rounded);
+  }
+
+  /** Compares the instants that two TIMESTAMP WITH TIME ZONE values
+   * denote. */
+  private static int compareTz(ZonedDateTime b0, ZonedDateTime b1) {
+    return b0.toInstant().compareTo(b1.toInstant());
+  }
+
+  /** SQL <code>=</code> operator applied to TIMESTAMP WITH TIME ZONE values;
+   * true if they denote the same instant, regardless of zone. */
+  public static boolean eq(ZonedDateTime b0, ZonedDateTime b1) {
+    return b0.isEqual(b1);
+  }
+
+  /** SQL <code>&lt;&gt;</code> operator applied to TIMESTAMP WITH TIME ZONE
+   * values. */
+  public static boolean ne(ZonedDateTime b0, ZonedDateTime b1) {
+    return !b0.isEqual(b1);
+  }
+
+  /** SQL <code>&lt;</code> operator applied to TIMESTAMP WITH TIME ZONE
+   * values. */
+  public static boolean lt(ZonedDateTime b0, ZonedDateTime b1) {
+    return compareTz(b0, b1) < 0;
+  }
+
+  /** SQL <code>&le;</code> operator applied to TIMESTAMP WITH TIME ZONE
+   * values. */
+  public static boolean le(ZonedDateTime b0, ZonedDateTime b1) {
+    return compareTz(b0, b1) <= 0;
+  }
+
+  /** SQL <code>&gt;</code> operator applied to TIMESTAMP WITH TIME ZONE
+   * values. */
+  public static boolean gt(ZonedDateTime b0, ZonedDateTime b1) {
+    return compareTz(b0, b1) > 0;
+  }
+
+  /** SQL <code>&ge;</code> operator applied to TIMESTAMP WITH TIME ZONE
+   * values. */
+  public static boolean ge(ZonedDateTime b0, ZonedDateTime b1) {
+    return compareTz(b0, b1) >= 0;
+  }
+
+  /** Adds a day-time interval to a TIMESTAMP WITH TIME ZONE value.
+   *
+   * <p>If {@code localDays} is true (the interval starts with DAY), whole
+   * days are added in local time, as {@link ZonedDateTime#plusDays} does,
+   * and the remainder is added to the instant; otherwise the whole interval
+   * is added to the instant. For a value whose zone is an offset, the two
+   * are the same. */
+  public static ZonedDateTime timestampTzPlus(ZonedDateTime v, long millis,
+      boolean localDays) {
+    if (localDays) {
+      final long days = millis / DateTimeUtils.MILLIS_PER_DAY;
+      final long rest = millis % DateTimeUtils.MILLIS_PER_DAY;
+      return v.plusDays(days).plus(Duration.ofMillis(rest));
+    }
+    return v.plus(Duration.ofMillis(millis));
+  }
+
+  /** Adds a year-month interval (a number of months) to a TIMESTAMP WITH TIME
+   * ZONE value, in local time. */
+  public static ZonedDateTime timestampTzPlusMonths(ZonedDateTime v,
+      int months) {
+    return v.plusMonths(months);
+  }
+
+  /** Returns a TIMESTAMP WITH TIME ZONE value truncated to a given time
+   * unit, in its own local time; the zone is kept. */
+  public static ZonedDateTime floorTimestampTz(ZonedDateTime v,
+      TimeUnitRange range) {
+    final long local = toLocalMillis(v.toLocalDateTime());
+    final long floor = floorCeilLocal(local, range, false);
+    return ZonedDateTime.ofLocal(toLocalDateTime(floor), v.getZone(),
+        v.getOffset());
+  }
+
+  /** Rounds a local timestamp down or up to a time unit. */
+  private static long floorCeilLocal(long local, TimeUnitRange range,
+      boolean ceil) {
+    switch (range) {
+    case YEAR:
+    case ISOYEAR:
+    case QUARTER:
+    case MONTH:
+    case WEEK:
+    case DAY:
+    case DECADE:
+    case CENTURY:
+    case MILLENNIUM:
+      if (ceil) {
+        final long day = ceil(local, DateTimeUtils.MILLIS_PER_DAY);
+        return DateTimeUtils.unixTimestampCeil(range, day);
+      }
+      return DateTimeUtils.unixTimestampFloor(range,
+          floor(local, DateTimeUtils.MILLIS_PER_DAY));
+    default:
+      final BigDecimal multiplier = range.startUnit.multiplier;
+      if (multiplier.compareTo(BigDecimal.ONE) < 0) {
+        // MICROSECOND, NANOSECOND; finer than the precision of the value
+        return local;
+      }
+      return ceil ? ceil(local, multiplier.longValue())
+          : floor(local, multiplier.longValue());
+    }
+  }
+
+  /** Returns a TIMESTAMP WITH TIME ZONE value rounded up to a given time
+   * unit, in its own local time; the zone is kept. */
+  public static ZonedDateTime ceilTimestampTz(ZonedDateTime v,
+      TimeUnitRange range) {
+    final long local = toLocalMillis(v.toLocalDateTime());
+    final long ceil = floorCeilLocal(local, range, true);
+    return ZonedDateTime.ofLocal(toLocalDateTime(ceil), v.getZone(),
+        v.getOffset());
+  }
+
+  /** Returns the hour component of the zone displacement of a TIMESTAMP
+   * WITH TIME ZONE value, as for {@code EXTRACT(TIMEZONE_HOUR FROM ...)}. */
+  public static int timezoneHour(ZonedDateTime v) {
+    return v.getOffset().getTotalSeconds() / 3600;
+  }
+
+  /** Returns the minute component of the zone displacement of a TIMESTAMP
+   * WITH TIME ZONE value, as for
+   * {@code EXTRACT(TIMEZONE_MINUTE FROM ...)}. */
+  public static int timezoneMinute(ZonedDateTime v) {
+    return v.getOffset().getTotalSeconds() / 60 % 60;
+  }
+
+  /** Returns the hour component of the zone displacement of a TIME WITH TIME
+   * ZONE value. */
+  public static int timezoneHour(OffsetTime v) {
+    return v.getOffset().getTotalSeconds() / 3600;
+  }
+
+  /** Returns the minute component of the zone displacement of a TIME WITH
+   * TIME ZONE value. */
+  public static int timezoneMinute(OffsetTime v) {
+    return v.getOffset().getTotalSeconds() / 60 % 60;
+  }
+
+  /** Returns a TIMESTAMP WITH TIME ZONE value that denotes the same instant
+   * in a different zone, as for {@code ... AT TIME ZONE zone}. The zone is
+   * a string such as "+05:30" or "America/New_York". */
+  public static ZonedDateTime atTimeZone(ZonedDateTime v, String zone) {
+    return v.withZoneSameInstant(DateTimeStringUtils.parseZone(zone));
+  }
+
+  /** Returns a TIMESTAMP WITH TIME ZONE value that denotes the same instant
+   * with a different offset, as for
+   * {@code ... AT TIME ZONE INTERVAL '05:30' HOUR TO MINUTE}; the offset is
+   * given in milliseconds. */
+  public static ZonedDateTime atTimeZone(ZonedDateTime v, long offsetMillis) {
+    final ZoneOffset offset =
+        ZoneOffset.ofTotalSeconds((int) (offsetMillis / 1000L));
+    return v.withZoneSameInstant(
+        DateTimeStringUtils.parseZone(offset.getId()));
+  }
+
+  /** Returns a TIMESTAMP WITH TIME ZONE value that denotes the same instant
+   * with the session's offset, as for {@code ... AT LOCAL}. */
+  public static ZonedDateTime atLocal(ZonedDateTime v, TimeZone timeZone) {
+    return v.withZoneSameInstant(timeZone.toZoneId()).withFixedOffsetZone();
+  }
+
+  /** Converts a string such as "10:00:00 +05:30" to a TIME WITH TIME ZONE
+   * value. */
+  public static @PolyNull OffsetTime toTimeTz(@PolyNull String v) {
+    if (v == null) {
+      return castNonNull(null);
+    }
+    return new TimeWithTimeZoneString(v.trim()).toOffsetTime();
+  }
+
+  /** Converts a string to a TIME WITH TIME ZONE value; if the string has no
+   * time zone, the time is interpreted in the given time zone. */
+  public static @PolyNull OffsetTime toTimeTz(@PolyNull String v,
+      TimeZone timeZone) {
+    if (v == null) {
+      return castNonNull(null);
+    }
+    final String s = v.trim();
+    if (DateTimeStringUtils.splitTimeZone(s) != null) {
+      return toTimeTz(s);
+    }
+    return timeToTimeTz(DateTimeUtils.timeStringToUnixDate(s), timeZone);
+  }
+
+  /** Converts a TIME WITH TIME ZONE value to a string, for example
+   * "10:00:00 +05:30". */
+  public static String timeTzToString(OffsetTime v) {
+    return TimeWithTimeZoneString.fromOffsetTime(v).toString();
+  }
+
+  /** Converts a TIME WITH TIME ZONE value to a string with a given number of
+   * fractional digits. */
+  public static String timeTzToString(OffsetTime v, int precision) {
+    return TimeWithTimeZoneString.fromOffsetTime(v)
+        .toString(Math.max(precision, 0));
+  }
+
+  /** Returns the number of milliseconds since midnight UTC of a TIME WITH
+   * TIME ZONE value. */
+  public static int timeTzToMillisOfDay(OffsetTime v) {
+    return (int) (v.withOffsetSameInstant(ZoneOffset.UTC).toLocalTime()
+        .toNanoOfDay() / 1_000_000L);
+  }
+
+  /** As {@link #timeTzToMillisOfDay(OffsetTime)}, but nullable. */
+  public static @PolyNull Integer timeTzToMillisOfDayOptional(
+      @PolyNull OffsetTime v) {
+    return v == null ? castNonNull(null) : timeTzToMillisOfDay(v);
+  }
+
+  /** Converts a number of milliseconds since midnight UTC to a TIME WITH
+   * TIME ZONE value in UTC. */
+  public static OffsetTime timeTzFromMillisOfDay(int v) {
+    return OffsetTime.of(
+        LocalTime.ofNanoOfDay(Math.floorMod(v, DateTimeUtils.MILLIS_PER_DAY)
+            * 1_000_000L),
+        ZoneOffset.UTC);
+  }
+
+  /** As {@link #timeTzFromMillisOfDay(int)}, but nullable. */
+  public static @PolyNull OffsetTime timeTzFromMillisOfDayOptional(
+      @PolyNull Integer v) {
+    return v == null ? castNonNull(null) : timeTzFromMillisOfDay(v);
+  }
+
+  /** Returns the offset of a time zone today, which is what the SQL
+   * standard calls its current displacement. */
+  private static ZoneOffset currentOffset(TimeZone timeZone) {
+    return timeZone.toZoneId().getRules().getOffset(Instant.now());
+  }
+
+  /** Converts a TIME value to TIME WITH TIME ZONE, using the current offset
+   * of the given (session) time zone. */
+  public static OffsetTime timeToTimeTz(int v, TimeZone timeZone) {
+    return OffsetTime.of(
+        LocalTime.ofNanoOfDay(Math.floorMod(v, DateTimeUtils.MILLIS_PER_DAY)
+            * 1_000_000L),
+        currentOffset(timeZone));
+  }
+
+  /** Converts a TIME WITH TIME ZONE value to TIME, using the current offset
+   * of the given (session) time zone. */
+  public static int timeTzToTime(OffsetTime v, TimeZone timeZone) {
+    return (int) (v.withOffsetSameInstant(currentOffset(timeZone))
+        .toLocalTime().toNanoOfDay() / 1_000_000L);
+  }
+
+  /** SQL <code>=</code> operator applied to TIME WITH TIME ZONE values;
+   * true if they denote the same time in UTC. */
+  public static boolean eq(OffsetTime b0, OffsetTime b1) {
+    return b0.isEqual(b1);
+  }
+
+  /** SQL <code>&lt;&gt;</code> operator applied to TIME WITH TIME ZONE
+   * values. */
+  public static boolean ne(OffsetTime b0, OffsetTime b1) {
+    return !b0.isEqual(b1);
+  }
+
+  /** SQL <code>&lt;</code> operator applied to TIME WITH TIME ZONE values. */
+  public static boolean lt(OffsetTime b0, OffsetTime b1) {
+    return b0.isBefore(b1);
+  }
+
+  /** SQL <code>&le;</code> operator applied to TIME WITH TIME ZONE values. */
+  public static boolean le(OffsetTime b0, OffsetTime b1) {
+    return !b0.isAfter(b1);
+  }
+
+  /** SQL <code>&gt;</code> operator applied to TIME WITH TIME ZONE values. */
+  public static boolean gt(OffsetTime b0, OffsetTime b1) {
+    return b0.isAfter(b1);
+  }
+
+  /** SQL <code>&ge;</code> operator applied to TIME WITH TIME ZONE values. */
+  public static boolean ge(OffsetTime b0, OffsetTime b1) {
+    return !b0.isBefore(b1);
   }
 
   // Don't need shortValueOf etc. - Short.valueOf is sufficient.

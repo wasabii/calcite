@@ -2248,6 +2248,31 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   public static final SqlFunction EXTRACT = new SqlExtractFunction("EXTRACT", false);
 
   /**
+   * The SQL <code>EXTRACT(TIMEZONE_HOUR FROM ...)</code> operator. Returns the
+   * hour component of the time zone displacement of a TIMESTAMP WITH TIME
+   * ZONE or TIME WITH TIME ZONE value.
+   */
+  public static final SqlFunction EXTRACT_TIMEZONE_HOUR =
+      new SqlExtractTimeZoneFunction("TIMEZONE_HOUR");
+
+  /**
+   * The SQL <code>EXTRACT(TIMEZONE_MINUTE FROM ...)</code> operator. Returns
+   * the minute component of the time zone displacement of a TIMESTAMP WITH
+   * TIME ZONE or TIME WITH TIME ZONE value.
+   */
+  public static final SqlFunction EXTRACT_TIMEZONE_MINUTE =
+      new SqlExtractTimeZoneFunction("TIMEZONE_MINUTE");
+
+  /** The SQL <code>AT TIME ZONE</code> operator, as in
+   * {@code timestamp AT TIME ZONE 'America/New_York'}. */
+  public static final SqlBinaryOperator AT_TIME_ZONE =
+      new SqlAtTimeZoneOperator();
+
+  /** The SQL <code>AT LOCAL</code> operator, as in
+   * {@code timestamp AT LOCAL}. */
+  public static final SqlPostfixOperator AT_LOCAL = new SqlAtLocalOperator();
+
+  /**
    * The SQL <code>YEAR</code> operator. Returns the Year
    * from a DATETIME  E.g.<br>
    * <code>YEAR(date '2008-9-23')</code> returns <code>

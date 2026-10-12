@@ -72,14 +72,14 @@ public enum SqlTypeName {
       SqlTypeFamily.TIME),
   TIME_WITH_LOCAL_TIME_ZONE(PrecScale.NO_NO | PrecScale.YES_NO, false, Types.TIME,
       SqlTypeFamily.TIME),
-  TIME_TZ(PrecScale.NO_NO | PrecScale.YES_NO, false, Types.TIME,
+  TIME_TZ(PrecScale.NO_NO | PrecScale.YES_NO, false, Types.TIME_WITH_TIMEZONE,
       SqlTypeFamily.TIME),
   TIMESTAMP(PrecScale.NO_NO | PrecScale.YES_NO, false, Types.TIMESTAMP,
       SqlTypeFamily.TIMESTAMP),
   TIMESTAMP_WITH_LOCAL_TIME_ZONE(PrecScale.NO_NO | PrecScale.YES_NO, false,
       Types.TIMESTAMP, SqlTypeFamily.TIMESTAMP),
   TIMESTAMP_TZ(PrecScale.NO_NO | PrecScale.YES_NO, false,
-      Types.TIMESTAMP, SqlTypeFamily.TIMESTAMP),
+      Types.TIMESTAMP_WITH_TIMEZONE, SqlTypeFamily.TIMESTAMP),
   INTERVAL_YEAR(PrecScale.NO_NO, false, Types.OTHER,
       SqlTypeFamily.INTERVAL_YEAR_MONTH),
   INTERVAL_YEAR_MONTH(PrecScale.NO_NO, false, Types.OTHER,
@@ -282,6 +282,8 @@ public enum SqlTypeName {
           .put(Types.DATE, DATE)
           .put(Types.TIME, TIME)
           .put(Types.TIMESTAMP, TIMESTAMP)
+          .put(Types.TIME_WITH_TIMEZONE, TIME_TZ)
+          .put(Types.TIMESTAMP_WITH_TIMEZONE, TIMESTAMP_TZ)
           .put(Types.BIT, BOOLEAN)
           .put(Types.BOOLEAN, BOOLEAN)
           .put(Types.DISTINCT, DISTINCT)

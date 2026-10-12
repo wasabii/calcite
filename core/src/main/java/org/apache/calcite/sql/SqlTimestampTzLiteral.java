@@ -46,7 +46,7 @@ public class SqlTimestampTzLiteral extends SqlAbstractDateTimeLiteral {
   }
 
   @Override public String toString() {
-    return getTypeName() + " '" + toFormattedString() + "'";
+    return "TIMESTAMP WITH TIME ZONE '" + toFormattedString() + "'";
   }
 
   @Override public String toFormattedString() {

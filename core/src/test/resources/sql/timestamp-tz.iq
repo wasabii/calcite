@@ -1,0 +1,351 @@
+# timestamp-tz.iq - TIMESTAMP WITH TIME ZONE and TIME WITH TIME ZONE
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+!use scott-tz-UTC
+!set outputformat mysql
+
+# The offset survives a round trip
+select timestamp with time zone '2020-01-01 10:00:00 +05:30' as t;
++----------------------------+
+| T                          |
++----------------------------+
+| 2020-01-01 10:00:00 +05:30 |
++----------------------------+
+(1 row)
+
+!ok
+
+# A region name survives a round trip
+select timestamp with time zone '2020-01-01 10:00:00 America/New_York' as t;
++--------------------------------------+
+| T                                    |
++--------------------------------------+
+| 2020-01-01 10:00:00 America/New_York |
++--------------------------------------+
+(1 row)
+
+!ok
+
+# The offset may be attached to the time, and 'Z' means UTC
+select timestamp with time zone '2020-01-01 10:00:00.123+05:30' as t1,
+  timestamp with time zone '2020-01-01 10:00:00Z' as t2;
++--------------------------------+----------------------------+
+| T1                             | T2                         |
++--------------------------------+----------------------------+
+| 2020-01-01 10:00:00.123 +05:30 | 2020-01-01 10:00:00 +00:00 |
++--------------------------------+----------------------------+
+(1 row)
+
+!ok
+
+# Values that denote the same instant are equal
+select timestamp with time zone '2020-01-01 10:00:00 +01:00'
+    = timestamp with time zone '2020-01-01 12:00:00 +03:00' as eq,
+  timestamp with time zone '2020-01-01 10:00:00 +01:00'
+    < timestamp with time zone '2020-01-01 12:00:01 +03:00' as lt,
+  timestamp with time zone '2020-01-01 10:00:00 +01:00'
+    <> timestamp with time zone '2020-01-01 10:00:00 +03:00' as ne;
++------+------+------+
+| EQ   | LT   | NE   |
++------+------+------+
+| true | true | true |
++------+------+------+
+(1 row)
+
+!ok
+
+# Comparison of non-literal values
+select t, t = timestamp with time zone '2020-01-01 09:00:00 +00:00' as eq
+from (values (timestamp with time zone '2020-01-01 10:00:00 +01:00'),
+  (timestamp with time zone '2020-01-01 12:00:00 +03:00'),
+  (timestamp with time zone '2020-01-01 12:00:00 +01:00')) as v(t);
++----------------------------+-------+
+| T                          | EQ    |
++----------------------------+-------+
+| 2020-01-01 10:00:00 +01:00 | true  |
+| 2020-01-01 12:00:00 +01:00 | false |
+| 2020-01-01 12:00:00 +03:00 | true  |
++----------------------------+-------+
+(3 rows)
+
+!ok
+
+# GROUP BY and DISTINCT put values that denote the same instant together
+select count(*) as c, min(t) as mn
+from (values (timestamp with time zone '2020-01-01 10:00:00 +01:00'),
+  (timestamp with time zone '2020-01-01 12:00:00 +03:00'),
+  (timestamp with time zone '2020-01-01 12:00:00 +01:00')) as v(t)
+group by t
+order by 2;
++---+----------------------------+
+| C | MN                         |
++---+----------------------------+
+| 2 | 2020-01-01 10:00:00 +01:00 |
+| 1 | 2020-01-01 12:00:00 +01:00 |
++---+----------------------------+
+(2 rows)
+
+!ok
+
+select count(distinct t) as c
+from (values (timestamp with time zone '2020-01-01 10:00:00 +01:00'),
+  (timestamp with time zone '2020-01-01 12:00:00 +03:00'),
+  (timestamp with time zone '2020-01-01 12:00:00 +01:00')) as v(t);
++---+
+| C |
++---+
+| 2 |
++---+
+(1 row)
+
+!ok
+
+# ORDER BY sorts by instant
+select t
+from (values (timestamp with time zone '2020-01-01 10:00:00 -05:00'),
+  (timestamp with time zone '2020-01-01 12:00:00 +03:00'),
+  (timestamp with time zone '2020-01-01 11:00:00 +00:00')) as v(t)
+order by t;
++----------------------------+
+| T                          |
++----------------------------+
+| 2020-01-01 12:00:00 +03:00 |
+| 2020-01-01 11:00:00 +00:00 |
+| 2020-01-01 10:00:00 -05:00 |
++----------------------------+
+(3 rows)
+
+!ok
+
+# EXTRACT returns UTC fields
+select extract(hour from timestamp with time zone '2020-01-01 10:00:00 +05:30') as h,
+  extract(minute from timestamp with time zone '2020-01-01 10:00:00 +05:30') as m,
+  extract(day from timestamp with time zone '2020-01-01 01:00:00 +05:30') as d;
++---+----+----+
+| H | M  | D  |
++---+----+----+
+| 4 | 30 | 31 |
++---+----+----+
+(1 row)
+
+!ok
+
+# CAST to and from VARCHAR uses the value's own zone
+select cast(timestamp with time zone '2020-01-01 10:00:00 +05:30' as varchar) as v1,
+  cast('2020-01-01 10:00:00 America/New_York' as timestamp with time zone) as t1,
+  cast('2020-01-01 10:00:00' as timestamp with time zone) as t2;
++----------------------------+--------------------------------------+----------------------------+
+| V1                         | T1                                   | T2                         |
++----------------------------+--------------------------------------+----------------------------+
+| 2020-01-01 10:00:00 +05:30 | 2020-01-01 10:00:00 America/New_York | 2020-01-01 10:00:00 +00:00 |
++----------------------------+--------------------------------------+----------------------------+
+(1 row)
+
+!ok
+
+# CAST to TIMESTAMP, DATE and TIME uses the session time zone (UTC)
+select cast(timestamp with time zone '2020-01-01 01:00:00 +05:30' as timestamp) as ts,
+  cast(timestamp with time zone '2020-01-01 01:00:00 +05:30' as date) as d,
+  cast(timestamp with time zone '2020-01-01 01:00:00 +05:30' as time) as t;
++---------------------+------------+----------+
+| TS                  | D          | T        |
++---------------------+------------+----------+
+| 2019-12-31 19:30:00 | 2019-12-31 | 19:30:00 |
++---------------------+------------+----------+
+(1 row)
+
+!ok
+
+# CAST from TIMESTAMP uses the session time zone (UTC)
+select cast(timestamp '2020-01-01 10:00:00' as timestamp with time zone) as t;
++----------------------------+
+| T                          |
++----------------------------+
+| 2020-01-01 10:00:00 +00:00 |
++----------------------------+
+(1 row)
+
+!ok
+
+# Interval arithmetic keeps the zone
+select timestamp with time zone '2020-01-01 10:00:00 +05:30' + interval '1' hour as t1,
+  timestamp with time zone '2020-01-31 10:00:00 +05:30' + interval '1' month as t2,
+  timestamp with time zone '2020-01-01 10:00:00 +05:30' - interval '1' day as t3;
++----------------------------+----------------------------+----------------------------+
+| T1                         | T2                         | T3                         |
++----------------------------+----------------------------+----------------------------+
+| 2020-01-01 11:00:00 +05:30 | 2020-02-29 10:00:00 +05:30 | 2019-12-31 10:00:00 +05:30 |
++----------------------------+----------------------------+----------------------------+
+(1 row)
+
+!ok
+
+# In a region, adding a day keeps the local time across a daylight-saving
+# change; adding 24 hours keeps the elapsed time
+select timestamp with time zone '2026-03-07 12:00:00 America/New_York' + interval '1' day as t1,
+  timestamp with time zone '2026-03-07 12:00:00 America/New_York' + interval '24' hour as t2;
++--------------------------------------+--------------------------------------+
+| T1                                   | T2                                   |
++--------------------------------------+--------------------------------------+
+| 2026-03-08 12:00:00 America/New_York | 2026-03-08 13:00:00 America/New_York |
++--------------------------------------+--------------------------------------+
+(1 row)
+
+!ok
+
+# The difference of two values is the difference of their instants
+select (timestamp with time zone '2020-01-01 12:00:00 +03:00'
+  - timestamp with time zone '2020-01-01 08:00:00 +00:00') hour as h;
++----+
+| H  |
++----+
+| +1 |
++----+
+(1 row)
+
+!ok
+
+# FLOOR and CEIL work in the value's own local time
+select floor(timestamp with time zone '2020-01-01 10:20:30 +05:30' to hour) as f1,
+  floor(timestamp with time zone '2020-01-01 01:20:30 +05:30' to day) as f2,
+  ceil(timestamp with time zone '2020-01-01 10:20:30 America/New_York' to day) as c1;
++----------------------------+----------------------------+--------------------------------------+
+| F1                         | F2                         | C1                                   |
++----------------------------+----------------------------+--------------------------------------+
+| 2020-01-01 10:00:00 +05:30 | 2020-01-01 00:00:00 +05:30 | 2020-01-02 00:00:00 America/New_York |
++----------------------------+----------------------------+--------------------------------------+
+(1 row)
+
+!ok
+
+# AT TIME ZONE converts to another zone, keeping the instant
+select timestamp with time zone '2020-01-01 10:00:00 +05:30' at time zone 'America/New_York' as t1,
+  timestamp with time zone '2020-01-01 10:00:00 +05:30' at time zone '-08:00' as t2,
+  timestamp with time zone '2020-01-01 10:00:00 +05:30' at time zone interval '01:00' hour to minute as t3,
+  timestamp with time zone '2020-01-01 10:00:00 +05:30' at time zone 'UTC' + interval '1' hour as t4;
++--------------------------------------+----------------------------+----------------------------+-------------------------+
+| T1                                   | T2                         | T3                         | T4                      |
++--------------------------------------+----------------------------+----------------------------+-------------------------+
+| 2019-12-31 23:30:00 America/New_York | 2019-12-31 20:30:00 -08:00 | 2020-01-01 05:30:00 +01:00 | 2020-01-01 05:30:00 UTC |
++--------------------------------------+----------------------------+----------------------------+-------------------------+
+(1 row)
+
+!ok
+
+# AT TIME ZONE on a TIMESTAMP assumes the session time zone (UTC)
+select timestamp '2020-01-01 10:00:00' at time zone 'Asia/Kolkata' as t;
++----------------------------------+
+| T                                |
++----------------------------------+
+| 2020-01-01 15:30:00 Asia/Kolkata |
++----------------------------------+
+(1 row)
+
+!ok
+
+# AT LOCAL converts to the session time zone (UTC)
+select timestamp with time zone '2020-01-01 10:00:00 +05:30' at local as t;
++----------------------------+
+| T                          |
++----------------------------+
+| 2020-01-01 04:30:00 +00:00 |
++----------------------------+
+(1 row)
+
+!ok
+
+# EXTRACT TIMEZONE_HOUR and TIMEZONE_MINUTE
+select extract(timezone_hour from timestamp with time zone '2020-01-01 10:00:00 +05:30') as h1,
+  extract(timezone_minute from timestamp with time zone '2020-01-01 10:00:00 +05:30') as m1,
+  extract(timezone_hour from timestamp with time zone '2020-01-01 10:00:00 -03:30') as h2,
+  extract(timezone_minute from timestamp with time zone '2020-01-01 10:00:00 -03:30') as m2,
+  extract(timezone_hour from timestamp with time zone '2020-07-01 10:00:00 America/New_York') as h3,
+  extract(timezone_hour from time with time zone '10:00:00 +05:30') as h4;
++----+----+----+-----+----+----+
+| H1 | M1 | H2 | M2  | H3 | H4 |
++----+----+----+-----+----+----+
+|  5 | 30 | -3 | -30 | -4 |  5 |
++----+----+----+-----+----+----+
+(1 row)
+
+!ok
+
+!use scott-tz-America/New_York
+
+# CAST to TIMESTAMP uses the session time zone (America/New_York)
+select cast(timestamp with time zone '2020-01-01 10:00:00 +00:00' as timestamp) as ts;
++---------------------+
+| TS                  |
++---------------------+
+| 2020-01-01 05:00:00 |
++---------------------+
+(1 row)
+
+!ok
+
+# CAST from TIMESTAMP uses the session time zone's offset at that instant
+select cast(timestamp '2020-01-01 10:00:00' as timestamp with time zone) as winter,
+  cast(timestamp '2020-07-01 10:00:00' as timestamp with time zone) as summer;
++----------------------------+----------------------------+
+| WINTER                     | SUMMER                     |
++----------------------------+----------------------------+
+| 2020-01-01 10:00:00 -05:00 | 2020-07-01 10:00:00 -04:00 |
++----------------------------+----------------------------+
+(1 row)
+
+!ok
+
+# CAST between TIMESTAMP WITH LOCAL TIME ZONE and TIMESTAMP WITH TIME ZONE
+# keeps the instant
+select cast(timestamp with time zone '2020-01-01 10:00:00 +05:30'
+  as timestamp with local time zone) as ltz,
+  cast(timestamp with local time zone '2020-01-01 10:00:00'
+  as timestamp with time zone) as tz;
++---------------------+----------------------------+
+| LTZ                 | TZ                         |
++---------------------+----------------------------+
+| 2020-01-01 04:30:00 | 2020-01-01 05:00:00 -05:00 |
++---------------------+----------------------------+
+(1 row)
+
+!ok
+
+# AT LOCAL converts to the session time zone (America/New_York)
+select timestamp with time zone '2020-07-01 10:00:00 +00:00' at local as t1,
+  timestamp '2020-07-01 10:00:00' at time zone 'UTC' as t2;
++----------------------------+-------------------------+
+| T1                         | T2                      |
++----------------------------+-------------------------+
+| 2020-07-01 06:00:00 -04:00 | 2020-07-01 14:00:00 UTC |
++----------------------------+-------------------------+
+(1 row)
+
+!ok
+
+# TIME WITH TIME ZONE
+select time with time zone '10:00:00 +05:30' as t1,
+  time with time zone '10:00:00 +05:30' = time with time zone '05:30:00 +01:00' as eq;
++-----------------+------+
+| T1              | EQ   |
++-----------------+------+
+| 10:00:00 +05:30 | true |
++-----------------+------+
+(1 row)
+
+!ok
+
+# End timestamp-tz.iq

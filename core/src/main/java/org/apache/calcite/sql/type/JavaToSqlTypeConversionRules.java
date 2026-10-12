@@ -29,6 +29,8 @@ import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.OffsetTime;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -74,6 +76,8 @@ public class JavaToSqlTypeConversionRules {
           .put(Date.class, SqlTypeName.DATE)
           .put(Timestamp.class, SqlTypeName.TIMESTAMP)
           .put(Time.class, SqlTypeName.TIME)
+          .put(ZonedDateTime.class, SqlTypeName.TIMESTAMP_TZ)
+          .put(OffsetTime.class, SqlTypeName.TIME_TZ)
           .put(BigDecimal.class, SqlTypeName.DECIMAL)
 
           .put(Geometry.class, SqlTypeName.GEOMETRY)

@@ -76,6 +76,8 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.nio.charset.Charset;
+import java.time.OffsetTime;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -2498,6 +2500,8 @@ public class RexBuilder {
         return o;
       } else if (o instanceof Calendar) {
         return TimeWithTimeZoneString.fromCalendarFields((Calendar) o);
+      } else if (o instanceof OffsetTime) {
+        return TimeWithTimeZoneString.fromOffsetTime((OffsetTime) o);
       } else {
         throw new AssertionError("Value does not contain time zone");
       }
@@ -2540,6 +2544,8 @@ public class RexBuilder {
         return o;
       } else if (o instanceof Calendar) {
         return TimestampWithTimeZoneString.fromCalendarFields((Calendar) o);
+      } else if (o instanceof ZonedDateTime) {
+        return TimestampWithTimeZoneString.fromZonedDateTime((ZonedDateTime) o);
       } else {
         throw new AssertionError("Value does not contain time zone");
       }

@@ -219,7 +219,9 @@ public class JdbcToEnumerableConverter
               Expressions.call(BuiltInMethod.CREATE_ENRICHER.method,
                   Expressions.newArrayInit(Integer.class, 1,
                       toIndexesTableExpression(sqlString)),
-                  dataContextBuilder.build()));
+                  dataContextBuilder.build(),
+                  Expressions.constant(
+                      jdbcConvention.dialect.supportsTimeZoneRegions())));
 
       enumerable =
           builder0.append("enumerable",
@@ -302,7 +304,31 @@ public class JdbcToEnumerableConverter
       break;
     }
     final Expression source;
+    switch (fieldType.getSqlTypeName()) {
+    case TIMESTAMP_TZ:
+      // The driver may return OffsetDateTime, ZonedDateTime, Timestamp or
+      // String; the zone is preserved where the driver provides one
+      sqlTypeName = SqlTypeName.TIMESTAMP_TZ;
+      break;
+    case TIME_TZ:
+      sqlTypeName = SqlTypeName.TIME_TZ;
+      break;
+    default:
+      break;
+    }
     switch (sqlTypeName) {
+    case TIMESTAMP_TZ:
+      source =
+          Expressions.call(BuiltInMethod.OBJECT_TO_TIMESTAMP_TZ.method,
+              Expressions.call(resultSet_, "getObject",
+                  Expressions.constant(i + 1)));
+      break;
+    case TIME_TZ:
+      source =
+          Expressions.call(BuiltInMethod.OBJECT_TO_TIME_TZ.method,
+              Expressions.call(resultSet_, "getObject",
+                  Expressions.constant(i + 1)));
+      break;
     case DATE:
     case TIME:
     case TIMESTAMP:

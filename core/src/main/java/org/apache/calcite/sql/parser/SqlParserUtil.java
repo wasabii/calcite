@@ -46,6 +46,7 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.impl.SqlParserImpl;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.DateString;
+import org.apache.calcite.util.DateTimeStringUtils;
 import org.apache.calcite.util.PrecedenceClimbingParser;
 import org.apache.calcite.util.TimeString;
 import org.apache.calcite.util.TimeWithTimeZoneString;
@@ -74,7 +75,6 @@ import java.util.IllformedLocaleException;
 import java.util.List;
 import java.util.Locale;
 import java.util.StringTokenizer;
-import java.util.TimeZone;
 import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
@@ -368,35 +368,42 @@ public final class SqlParserUtil {
 
   public static SqlTimeTzLiteral parseTimeTzLiteral(
       String s, SqlParserPos pos) {
-    // We expect the string to end in a timezone.
-    final int lastSpace = s.lastIndexOf(" ");
-    DateTimeUtils.PrecisionTime pt = null;
-    if (lastSpace >= 0) {
-      final String timeZone = s.substring(lastSpace + 1);
-      final String time = s.substring(0, lastSpace);
-
-      try {
-        ZoneId zoneId = ZoneId.of(timeZone);
-        TimeZone tz = TimeZone.getTimeZone(zoneId);
-        pt =
-            DateTimeUtils.parsePrecisionDateTimeLiteral(time, Format.get().time, tz, -1);
-      } catch (DateTimeException e) {
-        String message = e.getMessage();
-        if (message == null) {
-          message = "Error parsing TIME ZONE";
-        }
-        throw SqlUtil.newContextException(pos,
-            RESOURCE.illegalLiteral("TIME WITH TIME ZONE", s, message));
-      }
-    }
-    if (pt == null) {
+    // We expect the string to end in a time zone, optionally preceded by a
+    // space; for example "10:00:00 UTC", "10:00:00+05:30".
+    final String[] parts = DateTimeStringUtils.splitTimeZone(s);
+    if (parts == null) {
       throw SqlUtil.newContextException(pos,
           RESOURCE.illegalLiteral("TIME WITH TIME ZONE", s,
               RESOURCE.badFormat(DateTimeUtils.TIME_FORMAT_STRING + " zone").str()));
     }
-    final TimeWithTimeZoneString t = TimeWithTimeZoneString.fromCalendarFields(pt.getCalendar())
-        .withFraction(pt.getFraction());
-    return SqlLiteral.createTime(t, pt.getPrecision(), pos);
+    final ZoneId zone = parseZone("TIME WITH TIME ZONE", s, parts[1], pos);
+    final SqlTimeLiteral t;
+    try {
+      t = parseTimeLiteral(parts[0], pos);
+    } catch (CalciteContextException e) {
+      throw SqlUtil.newContextException(pos,
+          RESOURCE.illegalLiteral("TIME WITH TIME ZONE", s,
+              RESOURCE.badFormat(DateTimeUtils.TIME_FORMAT_STRING + " zone").str()));
+    }
+    final TimeWithTimeZoneString tz =
+        new TimeWithTimeZoneString(t.getValueAs(TimeString.class), zone);
+    return SqlLiteral.createTime(tz, t.getPrec(), pos);
+  }
+
+  /** Parses a time zone in a literal, throwing a context exception if it is
+   * not valid. */
+  private static ZoneId parseZone(String typeName, String s, String zone,
+      SqlParserPos pos) {
+    try {
+      return DateTimeStringUtils.parseZone(zone);
+    } catch (DateTimeException e) {
+      String message = e.getMessage();
+      if (message == null) {
+        message = "Error parsing TIME ZONE";
+      }
+      throw SqlUtil.newContextException(pos,
+          RESOURCE.illegalLiteral(typeName, s, message));
+    }
   }
 
   public static SqlTimestampLiteral parseTimestampLiteral(String s,
@@ -417,34 +424,27 @@ public final class SqlParserUtil {
 
   public static SqlTimestampTzLiteral parseTimestampTzLiteral(
       String s, SqlParserPos pos) {
-    // We expect the string to to contain exactly two spaces:
-    // - one between date and time
-    // - one between time and timezone
-    long spaces = s.chars().filter(c -> c == ' ').count();
-    if (spaces == 2) {
-      int lastSpace = s.lastIndexOf(" ");
-      final String timeZone = s.substring(lastSpace + 1);
-      final String timestamp = s.substring(0, lastSpace);
-      try {
-        ZoneId zoneId = ZoneId.of(timeZone);
-        TimeZone tz = TimeZone.getTimeZone(zoneId);
-        if (tz != null) {
-          SqlTimestampLiteral ts = parseTimestampLiteral(SqlTypeName.TIMESTAMP, timestamp, pos);
-          TimestampWithTimeZoneString tsz = new TimestampWithTimeZoneString(ts.getTimestamp(), tz);
-          return SqlLiteral.createTimestamp(tsz, ts.getPrec(), pos);
-        }
-      } catch (DateTimeException e) {
-        String message = e.getMessage();
-        if (message == null) {
-          message = "Error parsing TIME ZONE";
-        }
-        throw SqlUtil.newContextException(pos,
-            RESOURCE.illegalLiteral("TIMESTAMP WITH TIME ZONE", s, message));
-      }
+    // We expect a timestamp followed by a time zone, optionally separated by
+    // a space; for example "2020-01-01 10:00:00 America/New_York",
+    // "2020-01-01 10:00:00.5+05:30", "2020-01-01 10:00:00 Z".
+    final String[] parts = DateTimeStringUtils.splitDateTimeZone(s);
+    if (parts == null) {
+      throw SqlUtil.newContextException(pos,
+          RESOURCE.illegalLiteral("TIMESTAMP WITH TIME ZONE", s,
+              RESOURCE.badFormat(DateTimeUtils.TIMESTAMP_FORMAT_STRING + " zone").str()));
     }
-    throw SqlUtil.newContextException(pos,
-        RESOURCE.illegalLiteral("TIMESTAMP WITH TIME ZONE", s,
-            RESOURCE.badFormat(DateTimeUtils.TIMESTAMP_FORMAT_STRING + " zone").str()));
+    final ZoneId zone = parseZone("TIMESTAMP WITH TIME ZONE", s, parts[1], pos);
+    final SqlTimestampLiteral ts;
+    try {
+      ts = parseTimestampLiteral(SqlTypeName.TIMESTAMP, parts[0], pos);
+    } catch (CalciteContextException e) {
+      throw SqlUtil.newContextException(pos,
+          RESOURCE.illegalLiteral("TIMESTAMP WITH TIME ZONE", s,
+              RESOURCE.badFormat(DateTimeUtils.TIMESTAMP_FORMAT_STRING + " zone").str()));
+    }
+    final TimestampWithTimeZoneString tsz =
+        new TimestampWithTimeZoneString(ts.getTimestamp(), zone);
+    return SqlLiteral.createTimestamp(tsz, ts.getPrec(), pos);
   }
 
   private static SqlTimestampLiteral parseTimestampLiteral(SqlTypeName typeName,

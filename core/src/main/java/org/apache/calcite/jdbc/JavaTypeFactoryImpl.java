@@ -49,6 +49,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
+import java.time.OffsetTime;
+import java.time.ZonedDateTime;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -188,7 +190,6 @@ public class JavaTypeFactoryImpl
       case DATE:
       case TIME:
       case TIME_WITH_LOCAL_TIME_ZONE:
-      case TIME_TZ:
       case INTEGER:
       case INTERVAL_YEAR:
       case INTERVAL_YEAR_MONTH:
@@ -196,7 +197,6 @@ public class JavaTypeFactoryImpl
         return type.isNullable() ? Integer.class : int.class;
       case TIMESTAMP:
       case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
-      case TIMESTAMP_TZ:
       case BIGINT:
       case INTERVAL_DAY:
       case INTERVAL_DAY_HOUR:
@@ -209,6 +209,11 @@ public class JavaTypeFactoryImpl
       case INTERVAL_MINUTE_SECOND:
       case INTERVAL_SECOND:
         return type.isNullable() ? Long.class : long.class;
+      case TIME_TZ:
+        return OffsetTime.class;
+      case TIMESTAMP_TZ:
+        // The zone is a ZoneOffset or a region such as "America/New_York"
+        return ZonedDateTime.class;
       case SMALLINT:
         return type.isNullable() ? Short.class : short.class;
       case TINYINT:

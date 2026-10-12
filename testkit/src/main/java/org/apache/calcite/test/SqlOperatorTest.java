@@ -5950,22 +5950,22 @@ public class SqlOperatorTest {
         .setFor(SqlLibraryOperators.TO_TIMESTAMP_PG);
 
     f.checkString("to_timestamp('2022-06-03 18:34:56', 'YYYY-MM-DD HH24:MI:SS')",
-        "2022-06-03 18:34:56 UTC",
+        "2022-06-03 18:34:56 +00:00",
         "TIMESTAMP_TZ(0) NOT NULL");
     f.checkString("to_timestamp('0001-01-01 18:43:56', 'YYYY-MM-DD HH24:MI:SS')",
-        "0001-01-01 18:43:56 UTC",
+        "0001-01-01 18:43:56 +00:00",
         "TIMESTAMP_TZ(0) NOT NULL");
     f.checkString("to_timestamp('18:34:56 Jun 03, 2022', 'HH24:MI:SS Mon DD, YYYY')",
-        "2022-06-03 18:34:56 UTC",
+        "2022-06-03 18:34:56 +00:00",
         "TIMESTAMP_TZ(0) NOT NULL");
     f.checkString("to_timestamp('18:34:56 2022-June-03', 'HH24:MI:SS YYYY-Month-DD')",
-        "2022-06-03 18:34:56 UTC",
+        "2022-06-03 18:34:56 +00:00",
         "TIMESTAMP_TZ(0) NOT NULL");
     f.checkString("to_timestamp('18:34:56 2022-Jun-03', 'HH24:MI:SS YYYY-Mon-DD')",
-        "2022-06-03 18:34:56 UTC",
+        "2022-06-03 18:34:56 +00:00",
         "TIMESTAMP_TZ(0) NOT NULL");
     f.checkString("to_timestamp('18:34:56 2022-154', 'HH24:MI:SS YYYY-DDD')",
-        "2022-06-03 18:34:56 UTC",
+        "2022-06-03 18:34:56 +00:00",
         "TIMESTAMP_TZ(0) NOT NULL");
     f.checkFails("to_timestamp('ABCD', 'YYYY-MM-DD HH24:MI:SS')",
         "java.sql.SQLException: Invalid format: 'YYYY-MM-DD HH24:MI:SS' for timestamp "

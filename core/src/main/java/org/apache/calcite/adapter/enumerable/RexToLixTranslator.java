@@ -70,6 +70,8 @@ import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.ControlFlowException;
 import org.apache.calcite.util.Pair;
+import org.apache.calcite.util.TimeWithTimeZoneString;
+import org.apache.calcite.util.TimestampWithTimeZoneString;
 import org.apache.calcite.util.Util;
 
 import com.google.common.base.CaseFormat;
@@ -515,6 +517,13 @@ public class RexToLixTranslator implements RexVisitor<RexToLixTranslator.Result>
     case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
       return translateCastToTimestampWithLocalTimeZone(sourceType, operand, defaultExpression);
 
+    case TIMESTAMP_TZ:
+      return translateCastToTimestampTz(sourceType, targetType, operand,
+          defaultExpression);
+
+    case TIME_TZ:
+      return translateCastToTimeTz(sourceType, operand, defaultExpression);
+
     case BOOLEAN:
       switch (sourceType.getSqlTypeName()) {
       case CHAR:
@@ -593,6 +602,19 @@ public class RexToLixTranslator implements RexVisitor<RexToLixTranslator.Result>
                 Expressions.new_(
                     BuiltInMethod.FORMAT_TIMESTAMP.method.getDeclaringClass()),
                 BuiltInMethod.FORMAT_TIMESTAMP.method, format, operand));
+
+      case TIMESTAMP_TZ:
+        // Rendered in the value's own zone
+        return RexImpTable.optimize2(operand,
+            Expressions.call(
+                BuiltInMethod.TIMESTAMP_TZ_TO_STRING_WITH_PRECISION.method,
+                operand, Expressions.constant(sourceType.getPrecision())));
+
+      case TIME_TZ:
+        return RexImpTable.optimize2(operand,
+            Expressions.call(
+                BuiltInMethod.TIME_TZ_TO_STRING_WITH_PRECISION.method,
+                operand, Expressions.constant(sourceType.getPrecision())));
 
       case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
         return RexImpTable.optimize2(operand, Expressions.isConstantNull(format)
@@ -884,6 +906,15 @@ public class RexToLixTranslator implements RexVisitor<RexToLixTranslator.Result>
                   operand,
                   Expressions.call(BuiltInMethod.TIME_ZONE.method, root)));
 
+    case TIMESTAMP_TZ:
+      // As the SQL standard says, in the session time zone
+      return
+          RexImpTable.optimize2(
+              operand, Expressions.call(
+                  BuiltInMethod.TIMESTAMP_TZ_TO_DATE.method,
+                  operand,
+                  Expressions.call(BuiltInMethod.TIME_ZONE.method, root)));
+
     default:
       return defaultExpression.get();
     }
@@ -923,6 +954,22 @@ public class RexToLixTranslator implements RexVisitor<RexToLixTranslator.Result>
           RexImpTable.optimize2(
               operand, Expressions.call(
                   BuiltInMethod.TIMESTAMP_WITH_LOCAL_TIME_ZONE_TO_TIME.method,
+                  operand,
+                  Expressions.call(BuiltInMethod.TIME_ZONE.method, root)));
+
+    case TIMESTAMP_TZ:
+      return
+          RexImpTable.optimize2(
+              operand, Expressions.call(
+                  BuiltInMethod.TIMESTAMP_TZ_TO_TIME.method,
+                  operand,
+                  Expressions.call(BuiltInMethod.TIME_ZONE.method, root)));
+
+    case TIME_TZ:
+      return
+          RexImpTable.optimize2(
+              operand, Expressions.call(
+                  BuiltInMethod.TIME_TZ_TO_TIME.method,
                   operand,
                   Expressions.call(BuiltInMethod.TIME_ZONE.method, root)));
 
@@ -1016,6 +1063,16 @@ public class RexToLixTranslator implements RexVisitor<RexToLixTranslator.Result>
                   operand,
                   Expressions.call(BuiltInMethod.TIME_ZONE.method, root)));
 
+    case TIMESTAMP_TZ:
+      // As the SQL standard says, the instant is converted to local time in
+      // the session time zone; the value's own zone is not used
+      return
+          RexImpTable.optimize2(
+              operand, Expressions.call(
+                  BuiltInMethod.TIMESTAMP_TZ_TO_TIMESTAMP.method,
+                  operand,
+                  Expressions.call(BuiltInMethod.TIME_ZONE.method, root)));
+
     default:
       return defaultExpression.get();
     }
@@ -1074,6 +1131,87 @@ public class RexToLixTranslator implements RexVisitor<RexToLixTranslator.Result>
                       BuiltInMethod.UNIX_TIMESTAMP_TO_STRING.method,
                       operand)),
               Expressions.call(BuiltInMethod.TIME_ZONE.method, root));
+
+    case TIMESTAMP_TZ:
+      // The instant is kept
+      return
+          RexImpTable.optimize2(
+              operand, Expressions.call(
+                  BuiltInMethod.TIMESTAMP_TZ_TO_TIMESTAMP_WITH_LOCAL_TIME_ZONE
+                      .method,
+                  operand));
+
+    default:
+      return defaultExpression.get();
+    }
+  }
+
+  private Expression translateCastToTimestampTz(RelDataType sourceType,
+      RelDataType targetType, Expression operand,
+      Supplier<Expression> defaultExpression) {
+    final Expression timeZone =
+        Expressions.call(BuiltInMethod.TIME_ZONE.method, root);
+    switch (sourceType.getSqlTypeName()) {
+    case CHAR:
+    case VARCHAR:
+      // A string without a zone is interpreted in the session time zone
+      return RexImpTable.optimize2(operand,
+          Expressions.call(BuiltInMethod.TIMESTAMP_STRING_TO_TIMESTAMP_TZ.method,
+              operand, timeZone));
+
+    case DATE:
+      return RexImpTable.optimize2(operand,
+          Expressions.call(BuiltInMethod.DATE_TO_TIMESTAMP_TZ.method,
+              operand, timeZone));
+
+    case TIMESTAMP:
+      // As the SQL standard says, the value is interpreted in the session
+      // time zone, whose offset becomes the value's zone
+      return RexImpTable.optimize2(operand,
+          Expressions.call(BuiltInMethod.TIMESTAMP_TO_TIMESTAMP_TZ.method,
+              operand, timeZone));
+
+    case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+      // The instant is kept
+      return RexImpTable.optimize2(operand,
+          Expressions.call(
+              BuiltInMethod.TIMESTAMP_WITH_LOCAL_TIME_ZONE_TO_TIMESTAMP_TZ
+                  .method,
+              operand, timeZone));
+
+    case TIMESTAMP_TZ:
+      if (targetType.getPrecision() < sourceType.getPrecision()) {
+        return RexImpTable.optimize2(operand,
+            Expressions.call(BuiltInMethod.ROUND_TIMESTAMP_TZ.method,
+                operand, Expressions.constant(targetType.getPrecision())));
+      }
+      return operand;
+
+    default:
+      return defaultExpression.get();
+    }
+  }
+
+  private Expression translateCastToTimeTz(RelDataType sourceType,
+      Expression operand, Supplier<Expression> defaultExpression) {
+    final Expression timeZone =
+        Expressions.call(BuiltInMethod.TIME_ZONE.method, root);
+    switch (sourceType.getSqlTypeName()) {
+    case CHAR:
+    case VARCHAR:
+      return RexImpTable.optimize2(operand,
+          Expressions.call(BuiltInMethod.TIME_STRING_TO_TIME_TZ.method,
+              operand, timeZone));
+
+    case TIME:
+      return RexImpTable.optimize2(operand,
+          Expressions.call(BuiltInMethod.TIME_TO_TIME_TZ.method,
+              operand, timeZone));
+
+    case TIMESTAMP_TZ:
+      return RexImpTable.optimize2(operand,
+          Expressions.call(BuiltInMethod.TIMESTAMP_TZ_TO_TIME_TZ.method,
+              operand));
 
     default:
       return defaultExpression.get();
@@ -1169,9 +1307,20 @@ public class RexToLixTranslator implements RexVisitor<RexToLixTranslator.Result>
           Expressions.constant(
               requireNonNull(bd,
                   () -> "value for " + literal).toString()));
+    case TIME_TZ:
+      return Expressions.call(BuiltInMethod.STRING_TO_TIME_TZ.method,
+          Expressions.constant(
+              requireNonNull(literal.getValueAs(TimeWithTimeZoneString.class),
+                  () -> "value for " + literal).toString()));
+    case TIMESTAMP_TZ:
+      // The zone (an offset or a region) is part of the value
+      return Expressions.call(BuiltInMethod.STRING_TO_TIMESTAMP_TZ.method,
+          Expressions.constant(
+              requireNonNull(
+                  literal.getValueAs(TimestampWithTimeZoneString.class),
+                  () -> "value for " + literal).toString()));
     case DATE:
     case TIME:
-    case TIME_TZ:
     case TIME_WITH_LOCAL_TIME_ZONE:
     case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
@@ -1180,7 +1329,6 @@ public class RexToLixTranslator implements RexVisitor<RexToLixTranslator.Result>
       javaClass = int.class;
       break;
     case TIMESTAMP:
-    case TIMESTAMP_TZ:
     case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
     case INTERVAL_DAY:
     case INTERVAL_DAY_HOUR:

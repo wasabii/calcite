@@ -11807,6 +11807,8 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "FINAL pre\n"
         + "RUNNING pre\n"
         + "\n"
+        + "AT LOCAL post\n"
+        + "AT TIME ZONE left\n"
         + "| left\n"
         + "\n"
         + "% left\n"

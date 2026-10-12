@@ -6930,6 +6930,7 @@ SqlNode BuiltinFunctionCall() :
     final SqlLiteral style; // mssql convert 'style' operand
     final SqlFunction f;
     final SqlNode format;
+    SqlFunction extractOp = SqlStdOperatorTable.EXTRACT_TIMEZONE_HOUR;
 }
 {
     //~ FUNCTIONS WITH SPECIAL SYNTAX ---------------------------------------
@@ -6957,14 +6958,30 @@ SqlNode BuiltinFunctionCall() :
         }
     |
         <EXTRACT> { s = span(); }
-        <LPAREN> unit = TimeUnitOrName() {
-            args.add(unit);
-        }
-        <FROM>
-        AddExpression(args, ExprContext.ACCEPT_SUB_QUERY)
-        <RPAREN> {
-            return SqlStdOperatorTable.EXTRACT.createCall(s.end(this), args);
-        }
+        <LPAREN>
+        (
+            // TIMEZONE_HOUR and TIMEZONE_MINUTE are not time units
+            LOOKAHEAD(2)
+            (
+                <TIMEZONE_HOUR> { extractOp = SqlStdOperatorTable.EXTRACT_TIMEZONE_HOUR; }
+            |
+                <TIMEZONE_MINUTE> { extractOp = SqlStdOperatorTable.EXTRACT_TIMEZONE_MINUTE; }
+            )
+            <FROM>
+            AddExpression(args, ExprContext.ACCEPT_SUB_QUERY)
+            <RPAREN> {
+                return extractOp.createCall(s.end(this), args);
+            }
+        |
+            unit = TimeUnitOrName() {
+                args.add(unit);
+            }
+            <FROM>
+            AddExpression(args, ExprContext.ACCEPT_SUB_QUERY)
+            <RPAREN> {
+                return SqlStdOperatorTable.EXTRACT.createCall(s.end(this), args);
+            }
+        )
     |
         <POSITION> { s = span(); }
         <LPAREN>
@@ -8646,6 +8663,7 @@ SqlBinaryOperator BinaryRowOperator() :
 |   <SUCCEEDS> { return SqlStdOperatorTable.SUCCEEDS; }
 |   LOOKAHEAD(2) <IMMEDIATELY> <PRECEDES> { return SqlStdOperatorTable.IMMEDIATELY_PRECEDES; }
 |   <IMMEDIATELY> <SUCCEEDS> { return SqlStdOperatorTable.IMMEDIATELY_SUCCEEDS; }
+|   <AT> <TIME> <ZONE> { return SqlStdOperatorTable.AT_TIME_ZONE; }
 |   op = BinaryMultisetOperator() { return op; }
 }
 
@@ -8668,6 +8686,8 @@ SqlPrefixOperator PrefixRowOperator() :
 SqlPostfixOperator PostfixRowOperator() :
 {}
 {
+    <AT> <LOCAL> { return SqlStdOperatorTable.AT_LOCAL; }
+|
     <IS>
     (
         <A> <SET> { return SqlStdOperatorTable.IS_A_SET; }
