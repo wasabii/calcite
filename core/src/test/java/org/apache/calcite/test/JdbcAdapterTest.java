@@ -188,13 +188,18 @@ class JdbcAdapterTest {
   /** Tests reading TIMESTAMP WITH TIME ZONE values from HSQLDB, and
    * comparing them in HSQLDB. */
   @Test void testTimestampTzFromJdbc() {
+    // Build each value from a string with an explicit offset, so that the
+    // result does not depend on the JVM's time zone (which HSQLDB uses to
+    // convert DATE to TIMESTAMP WITH TIME ZONE)
     CalciteAssert.model(JdbcTest.SCOTT_MODEL)
-        .query("select empno,\n"
-            + "  cast(hiredate as timestamp with time zone) as t\n"
-            + "from scott.emp\n"
-            + "where cast(hiredate as timestamp with time zone)\n"
-            + "  < timestamp with time zone '1981-01-01 00:00:00 +00:00'")
-        .returns("EMPNO=7369; T=1980-12-17 00:00:00 +00:00\n");
+        .query("select empno, t\n"
+            + "from (select empno,\n"
+            + "    cast(cast(hiredate as varchar(10)) || ' 10:00:00+05:30'\n"
+            + "      as timestamp with time zone) as t\n"
+            + "  from scott.emp)\n"
+            + "where t < timestamp with time zone '1981-01-01 00:00:00 +00:00'")
+        .explainContains("JdbcFilter")
+        .returns("EMPNO=7369; T=1980-12-17 10:00:00 +05:30\n");
   }
 
   @Test void testUnionPlan() {
